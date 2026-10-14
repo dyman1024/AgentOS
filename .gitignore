@@ -1,0 +1,10 @@
+.DS_Store
+build/
+DerivedData/
+*.xcodeproj/
+xcuserdata/
+Config/Local.xcconfig
+agent-engine/node_modules/
+agent-engine/dist/
+agent-engine/*.bun-build
+agent-engine/.*.bun-build

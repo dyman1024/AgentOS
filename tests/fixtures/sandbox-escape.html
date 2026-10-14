@@ -1,0 +1,13 @@
+<!doctype html>
+<!-- Fixture that misbehaves on purpose: network access attempts and a runtime error. Every attempt must be blocked and reported. -->
+<html><head><meta charset="utf-8"></head><body style="margin:0;background:#222">
+<img src="https://www.apple.com/favicon.ico">
+<script type="module">
+const results = {};
+try { await fetch('https://example.com/'); results.fetch = 'ALLOWED'; } catch { results.fetch = 'blocked'; }
+try { await import('https://esm.sh/canvas-confetti@1.9.3'); results.cdnImport = 'ALLOWED'; } catch { results.cdnImport = 'blocked'; }
+results.ws = await new Promise((res) => { try { const w = new WebSocket('wss://echo.websocket.org'); w.onopen = () => res('ALLOWED'); w.onerror = () => res('blocked'); setTimeout(() => res('blocked(timeout)'), 2000); } catch { res('blocked(threw)'); } });
+agentos.expose(() => results);
+console.log('probe results', JSON.stringify(results));
+setTimeout(() => { undefinedFunctionCall(); }, 50);
+</script></body></html>
