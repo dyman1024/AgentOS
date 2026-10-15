@@ -33,10 +33,10 @@ Personal AgentOS：macOS 上的**生成式个人操作系统**。电脑在应用
 | `tests/fixtures/` | 运行时自测和沙箱回归用例 |
 | `project.yml` | XcodeGen 工程定义（`.xcodeproj` 不入库） |
 
-常用命令：`make run`（生成工程、编译、打开）、`make build`、`make selftest`（不调用模型的运行时自测）、`make engine-check`（引擎类型检查）。引擎开发时可用 `AGENTOS_ENGINE_CMD="bun run $PWD/agent-engine/src/index.ts"` 免重编宿主。更多开关见 `docs/architecture/11-engineering.md`。
+常用命令：`make run`（生成工程、编译、打开）、`make build`、`make selftest`（不调用模型的运行时自测）、`make sandbox-test`（沙箱回归用例）、`make engine-check`（引擎类型检查）。引擎开发时可用 `AGENTOS_ENGINE_CMD="bun run $PWD/agent-engine/src/index.ts"` 免重编宿主。更多开关见 `docs/architecture/11-engineering.md`。
 
 ## 协作
 
 - 新功能在 `feat/*` 分支，文档在 `docs/*` 分支，通过 PR 合入 `main`。
 - 公开仓库：提交前确认没有 API Key、本机绝对路径等敏感信息。
-- 改动运行时沙箱（scheme handler、CSP、导航策略、消息桥）时，必须跑沙箱回归用例。
+- 改动运行时沙箱（scheme handler、CSP、导航策略、消息桥、注入脚本）时，必须跑 `make sandbox-test` 并全部通过。自测和沙箱用例会把 AgentOS 窗口弹到前台，运行期间不要遮住它。
