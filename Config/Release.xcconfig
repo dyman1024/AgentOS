@@ -1,0 +1,4 @@
+#include "AgentOS.xcconfig"
+ENABLE_HARDENED_RUNTIME = YES
+// Set SUFeedURL and SUPublicEDKey in the release build invocation or Local.xcconfig.
+// Development builds deliberately contain no live update endpoint.

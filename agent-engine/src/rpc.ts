@@ -15,10 +15,10 @@ export class Peer {
   private requestHandlers = new Map<string, RequestHandler>();
   private notificationHandlers = new Map<string, NotificationHandler>();
 
-  constructor() {
+  constructor(onClose: () => void = () => process.exit(0)) {
     const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
     rl.on('line', (line) => void this.onLine(line));
-    rl.on('close', () => process.exit(0));
+    rl.on('close', onClose);
   }
 
   onRequest(method: string, handler: RequestHandler) {

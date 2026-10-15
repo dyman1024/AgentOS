@@ -1,0 +1,49 @@
+import Foundation
+
+// Generated applications compile this host-owned SDK; they cannot grant themselves host permissions.
+public enum AgentOSNative {
+  private static let lock = NSCondition()
+  private static var replies: [String: [String: Any]] = [:]
+  private static var tools: [String: ([String: Any]) throws -> Any] = [:]
+  private static var events: [String: ([String: Any]) throws -> Void] = [:]
+  private static let outputLock = NSLock()
+  private static func write(_ value: [String: Any]) throws {
+    let data = try JSONSerialization.data(withJSONObject: value, options: [.fragmentsAllowed]) + Data([10])
+    outputLock.lock(); defer { outputLock.unlock() }
+    try FileHandle.standardOutput.write(contentsOf: data)
+  }
+  public static func call(_ method: String, _ args: [String: Any] = [:]) throws -> Any {
+    let id = UUID().uuidString
+    try write(["id": id, "method": method, "args": args])
+    let deadline = Date().addingTimeInterval(30)
+    lock.lock(); defer { lock.unlock() }
+    while replies[id] == nil { guard lock.wait(until: deadline) else { throw NSError(domain: "AgentOS", code: 1, userInfo: [NSLocalizedDescriptionKey: "Host timed out"]) } }
+    let reply = replies.removeValue(forKey: id)!
+    if let error = reply["error"] as? [String: Any] { throw NSError(domain: error["code"] as? String ?? "AgentOS", code: 1, userInfo: [NSLocalizedDescriptionKey: error["message"] as? String ?? "Host rejected call"]) }
+    return reply["result"] ?? NSNull()
+  }
+  public static func start(tools handlers: [String: ([String: Any]) throws -> Any] = [:], events subscriptions: [String: ([String: Any]) throws -> Void] = [:]) throws {
+    tools = handlers; events = subscriptions
+    Thread.detachNewThread {
+      while let line = readLine(), let bytes = line.data(using: .utf8), let message = try? JSONSerialization.jsonObject(with: bytes) as? [String: Any], let id = message["id"] as? String {
+        if let kind = message["kind"] as? String {
+          DispatchQueue.global().async {
+            do {
+              let name = message["name"] as? String ?? "", args = message["args"] as? [String: Any] ?? [:]
+              let value: Any
+              if kind == "event", let handler = events[name] { try handler(args); value = ["ok": true] }
+              else if let handler = tools[name] { value = try handler(args) }
+              else { throw NSError(domain: "not_found", code: 1) }
+              try write(["id": id, "result": value])
+            } catch { try? write(["id": id, "error": ["code": "app_error", "message": error.localizedDescription]]) }
+          }
+        } else { lock.lock(); replies[id] = message; lock.broadcast(); lock.unlock() }
+      }
+      exit(0)
+    }
+    if !isCore { return }
+    for name in handlers.keys.sorted() { _ = try call("tools.register", ["name": name]) }
+    for pattern in subscriptions.keys.sorted() { _ = try call("events.subscribe", ["pattern": pattern]) }
+  }
+  public static var isCore: Bool { CommandLine.arguments.contains("--mcp") }
+}
