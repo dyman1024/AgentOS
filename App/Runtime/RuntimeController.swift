@@ -50,6 +50,10 @@ final class RuntimeController: NSObject, WKNavigationDelegate, WKUIDelegate, WKS
         webView.uiDelegate = self
         webView.isInspectable = true
         webView.underPageBackgroundColor = .black
+    }
+
+    /// First load. The owner binds the web view to this app in the scheme handler before calling it.
+    func start() {
         webView.load(URLRequest(url: entryURL))
     }
 
@@ -248,8 +252,9 @@ final class RuntimeController: NSObject, WKNavigationDelegate, WKUIDelegate, WKS
 
     private func evaluate(_ body: String, _ arguments: [String: JSON] = [:]) async -> JSON {
         do {
+            // The host world sees the same DOM but not the app's globals, so the app cannot fake these results.
             let value = try await webView.callAsyncJavaScript(
-                body, arguments: arguments.mapValues(\.foundation), in: nil, contentWorld: .page)
+                body, arguments: arguments.mapValues(\.foundation), in: nil, contentWorld: RuntimeManager.hostWorld)
             return JSON(any: value)
         } catch {
             return .null
@@ -276,13 +281,31 @@ final class RuntimeController: NSObject, WKNavigationDelegate, WKUIDelegate, WKS
 
     // MARK: - WKNavigationDelegate
 
+    /// The main frame may only show this app's own origin or about:blank, so an app cannot switch origin by
+    /// navigating (to `agentos://..`, another app, or an opaque data:/blob: document). Subframes may also use
+    /// about:srcdoc; anything else they try is already refused by the CSP (`frame-src` falls back to 'none').
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction) async -> WKNavigationActionPolicy {
         guard let url = action.request.url else { return .cancel }
-        if url.scheme == AppSchemeHandler.scheme || url.scheme == "about" || url.scheme == "blob" || url.scheme == "data" {
+        // A nil target frame means a new window, which createWebViewWith refuses anyway.
+        let isMainFrame = action.targetFrame?.isMainFrame ?? true
+        if isOwnOrigin(url) || Self.isAbout(url, "blank") || (!isMainFrame && Self.isAbout(url, "srcdoc")) {
             return .allow
         }
-        append(level: "error", message: "Navigation blocked by the AgentOS sandbox: \(url.absoluteString)")
+        let shown = url.absoluteString.count > 200 ? url.absoluteString.prefix(200) + "…" : Substring(url.absoluteString)
+        append(level: "error", message: "Navigation blocked by the AgentOS sandbox: \(shown)")
+        Log.event("navigation_blocked", ["appId": .string(appId), "url": .string(String(shown)), "mainFrame": .bool(isMainFrame)])
         return .cancel
+    }
+
+    private func isOwnOrigin(_ url: URL) -> Bool {
+        url.scheme == AppSchemeHandler.scheme && url.host == appId && url.port == nil
+    }
+
+    /// `about:<page>`, optionally followed by a query or fragment.
+    private static func isAbout(_ url: URL, _ page: String) -> Bool {
+        let s = url.absoluteString
+        let end = s.firstIndex { $0 == "#" || $0 == "?" } ?? s.endIndex
+        return s[..<end] == "about:" + page
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {

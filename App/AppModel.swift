@@ -4,8 +4,8 @@ import SwiftUI
 /// Root state: wires the chat, the agent engine and the per-app runtimes together.
 @Observable
 final class AppModel {
-    let registry = AppRegistry()
-    let runtime = RuntimeManager()
+    let registry: AppRegistry
+    let runtime: RuntimeManager
     let settings = AppSettings()
     @ObservationIgnored private let engine = EngineClient()
 
@@ -21,6 +21,9 @@ final class AppModel {
     var currentWebView: GameWebView? { currentAppId.flatMap { runtime.controllers[$0]?.webView } }
 
     init() {
+        let registry = AppRegistry()
+        self.registry = registry
+        runtime = RuntimeManager(registry: registry)
         engine.onNotification = { [weak self] method, params in self?.handleNotification(method, params) }
         engine.onRequest = { [weak self] method, params in
             guard let self else { return .null }
