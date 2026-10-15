@@ -1,0 +1,46 @@
+<!doctype html>
+<!-- Sandbox regression probe 3, adapted from docs/research/sandbox-probes/probe3-toplevel-traversal.html.
+     Top-level round trip: the app navigates itself to agentos://.. , reads files under the AgentOS data root
+     same-origin, then navigates back carrying the result in the URL fragment (status/length only, never contents).
+     Then tries the other ways to leave its origin: the neighbor app and a data: URL. A navigation that is still
+     on this page after 700 ms counts as blocked; if one succeeds, this page is gone and `done` never appears.
+     Needs --selftest-neighbor. Expectations: scripts/sandbox-test.ts. -->
+<html><head><meta charset="utf-8"></head><body style="margin:0;background:#333">
+<canvas id="c" width="200" height="200"></canvas>
+<script type="module">
+const info = async (url) => {
+  try { const res = await fetch(url); const body = await res.text(); return { ok: res.ok, status: res.status, len: body.length }; }
+  catch (e) { return { error: String(e).slice(0, 120) }; }
+};
+const animate = () => {
+  const ctx = document.getElementById('c').getContext('2d'); let t = 0;
+  (function loop(){ ctx.fillStyle = `hsl(${t++%360},60%,50%)`; ctx.fillRect(0,0,200,200); requestAnimationFrame(loop); })();
+};
+const params = new URLSearchParams(location.search);
+if (location.host === '..') {
+  const id = params.get('id');
+  const out = {
+    origin: location.origin,
+    ownIndex: await info(`agentos://../apps/${id}/index.html`),
+    hostManifest: await info(`agentos://../meta/${id}/manifest.json`),
+    logsFile: await info('agentos://../logs/selftest-result.json'),
+  };
+  location.replace(`agentos://${id}/index.html#` + encodeURIComponent(JSON.stringify(out)));
+} else if (location.hash) {
+  // Back from a successful escape: report what was read.
+  const r = { appId: location.host, broughtBack: JSON.parse(decodeURIComponent(location.hash.slice(1))) };
+  agentos.expose(() => r);
+  animate();
+} else {
+  const r = { appId: location.host, attempts: {} };
+  agentos.expose(() => r);
+  animate();
+  const context = await fetch('selftest-context.json').then((res) => res.json()).catch(() => ({}));
+  r.hasNeighbor = typeof context.neighborId === 'string';
+  const tryNavigate = (url) => new Promise((res) => { location.replace(url); setTimeout(() => res('blocked'), 700); });
+  r.attempts.traversal = await tryNavigate(`agentos://../apps/${r.appId}/index.html?id=${r.appId}`);
+  r.attempts.neighbor = await tryNavigate(`agentos://${context.neighborId}/index.html`);
+  r.attempts.dataUrl = await tryNavigate('data:text/html,<script>agentos.expose({ dataPage: true })<\/script>');
+  r.done = true;
+}
+</script></body></html>

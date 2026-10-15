@@ -3,6 +3,10 @@ import WebKit
 
 /// Serves `agentos://<appId>/<path>` from the app's folder on disk.
 /// Every response carries a CSP that blocks all network access and external resources.
+///
+/// One handler serves every web view, so each request is checked against the web view that made it:
+/// the host must be a registered app ID in canonical UUID form and must equal the app that web view
+/// is bound to. Anything else (`agentos://..`, another app's ID, an unbound web view) gets a 403.
 final class AppSchemeHandler: NSObject, WKURLSchemeHandler {
     static let scheme = "agentos"
 
@@ -19,18 +23,62 @@ final class AppSchemeHandler: NSObject, WKURLSchemeHandler {
         "form-action 'none'",
     ].joined(separator: "; ")
 
+    private struct Binding {
+        weak var webView: WKWebView?
+        let appId: String
+    }
+
+    private let registry: AppRegistry
+    private var bindings: [ObjectIdentifier: Binding] = [:]
+
+    init(registry: AppRegistry) {
+        self.registry = registry
+    }
+
+    /// Records which app a web view belongs to. Requests from web views that were never bound are refused.
+    func bind(_ webView: WKWebView, to appId: String) {
+        bindings = bindings.filter { $0.value.webView != nil }
+        bindings[ObjectIdentifier(webView)] = Binding(webView: webView, appId: appId)
+    }
+
+    func unbind(_ webView: WKWebView) {
+        bindings.removeValue(forKey: ObjectIdentifier(webView))
+    }
+
+    /// The app the requesting web view is bound to. The identity check guards against a reused object address.
+    private func appId(for webView: WKWebView) -> String? {
+        guard let binding = bindings[ObjectIdentifier(webView)], binding.webView === webView else { return nil }
+        return binding.appId
+    }
+
+    /// True for the canonical lowercase UUID form the registry uses for app IDs.
+    static func isAppId(_ value: String) -> Bool {
+        UUID(uuidString: value)?.uuidString.lowercased() == value
+    }
+
     func webView(_ webView: WKWebView, start task: any WKURLSchemeTask) {
-        guard let url = task.request.url, let appId = url.host?.lowercased(), !appId.isEmpty else {
+        guard let url = task.request.url else {
             task.didFailWithError(URLError(.badURL))
             return
         }
-        let base = Paths.appDir(appId).standardizedFileURL
+        let boundAppId = appId(for: webView)
+        guard let appId = boundAppId, url.host == appId, url.port == nil,
+              Self.isAppId(appId), registry.manifest(appId) != nil
+        else {
+            Log.event("scheme_request_denied", [
+                "url": .string(String(url.absoluteString.prefix(300))), "appId": boundAppId.map(JSON.string) ?? .null,
+            ])
+            forbid(task, url: url)
+            return
+        }
+        // Resolve symlinks too, so a link planted in the app folder cannot point outside it.
+        let base = Paths.appDir(appId).resolvingSymlinksInPath()
         var path = url.path
         if path.isEmpty || path == "/" { path = "/index.html" }
-        let file = base.appendingPathComponent(String(path.dropFirst())).standardizedFileURL
+        let file = base.appendingPathComponent(String(path.dropFirst())).resolvingSymlinksInPath()
 
         guard file.path.hasPrefix(base.path + "/") else {
-            respond(task, url: url, status: 403, mime: "text/plain", body: Data("Forbidden".utf8))
+            forbid(task, url: url)
             return
         }
         if let data = try? Data(contentsOf: file) {
@@ -44,6 +92,10 @@ final class AppSchemeHandler: NSObject, WKURLSchemeHandler {
     }
 
     func webView(_ webView: WKWebView, stop task: any WKURLSchemeTask) {}
+
+    private func forbid(_ task: any WKURLSchemeTask, url: URL) {
+        respond(task, url: url, status: 403, mime: "text/plain", body: Data("Forbidden".utf8))
+    }
 
     private func respond(_ task: any WKURLSchemeTask, url: URL, status: Int, mime: String, body: Data) {
         let headers = [

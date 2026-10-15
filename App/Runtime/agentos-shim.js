@@ -1,7 +1,8 @@
 // Injected at document start into every generated app (main frame, page world).
-// Provides window.agentos for app code and window.__agentos hooks the host uses for testing.
+// Captures console output and errors, counts animation frames and provides window.agentos for app code.
+// The hooks the host uses for testing live in agentos-host.js, in a content world the app cannot reach.
 (() => {
-  if (window.__agentos) return;
+  if (window.agentos) return;
 
   const post = (m) => {
     try { window.webkit.messageHandlers.agentosLog.postMessage(m); } catch {}
@@ -61,61 +62,31 @@
     if (!editable && !activatable) e.preventDefault();
   });
 
-  // ---- synthetic input used by the agent's test tools
-  const KEYS = {
-    ArrowUp: ['ArrowUp', 38], ArrowDown: ['ArrowDown', 40], ArrowLeft: ['ArrowLeft', 37], ArrowRight: ['ArrowRight', 39],
-    ' ': ['Space', 32], Enter: ['Enter', 13], Escape: ['Escape', 27], Tab: ['Tab', 9], Backspace: ['Backspace', 8],
-    Shift: ['ShiftLeft', 16], Control: ['ControlLeft', 17], Alt: ['AltLeft', 18],
-  };
-  const keyInfo = (key) => {
-    if (key === 'Space' || key === 'Spacebar') key = ' ';
-    if (key === 'Esc') key = 'Escape';
-    if (KEYS[key]) return { key, code: KEYS[key][0], keyCode: KEYS[key][1] };
-    if (key.length === 1) {
-      const upper = key.toUpperCase();
-      if (upper >= 'A' && upper <= 'Z') return { key, code: 'Key' + upper, keyCode: upper.charCodeAt(0) };
-      if (key >= '0' && key <= '9') return { key, code: 'Digit' + key, keyCode: key.charCodeAt(0) };
-    }
-    return { key, code: key, keyCode: 0 };
-  };
-  const dispatchKey = (type, key) => {
-    const info = keyInfo(key);
-    const ev = new KeyboardEvent(type, { key: info.key, code: info.code, bubbles: true, cancelable: true });
-    Object.defineProperty(ev, 'keyCode', { get: () => info.keyCode });
-    Object.defineProperty(ev, 'which', { get: () => info.keyCode });
-    (document.activeElement || document.body || document).dispatchEvent(ev);
-  };
-  const dispatchClick = (x, y) => {
-    const target = document.elementFromPoint(x, y) || document.body;
-    const init = { bubbles: true, cancelable: true, clientX: x, clientY: y, button: 0, pointerId: 1, isPrimary: true };
-    target.dispatchEvent(new PointerEvent('pointerdown', init));
-    target.dispatchEvent(new MouseEvent('mousedown', init));
-    target.dispatchEvent(new PointerEvent('pointerup', init));
-    target.dispatchEvent(new MouseEvent('mouseup', init));
-    target.dispatchEvent(new MouseEvent('click', init));
-  };
-
   // ---- public API for app code
   let exposed;
   window.agentos = Object.freeze({
     expose(stateOrFn) { exposed = stateOrFn; },
   });
 
-  // ---- host hooks
-  window.__agentos = Object.freeze({
-    frames: () => frames,
-    hasExposed: () => exposed !== undefined,
-    state() {
-      if (exposed === undefined) return null;
-      try {
-        const v = typeof exposed === 'function' ? exposed() : exposed;
-        return v === undefined ? null : JSON.parse(JSON.stringify(v));
-      } catch (e) {
-        return { __error: String(e) };
-      }
-    },
-    key: dispatchKey,
-    click: dispatchClick,
-    viewport: () => ({ width: innerWidth, height: innerHeight, dpr: devicePixelRatio }),
-  });
+  // ---- answers the host hooks in agentos-host.js. The two worlds share the DOM but no JS objects, so the
+  // host asks with an event and gets a JSON string back. Registered before any app code runs, and stopped
+  // here so app listeners never see the request. Frame counts and exposed state are reported by the page
+  // either way; what the host world protects is the hooks themselves and everything the host evaluates.
+  const stringify = JSON.stringify;
+  const reply = (detail) => dispatchEvent(new CustomEvent('agentos-host-reply', { detail }));
+  const stateJSON = () => {
+    if (exposed === undefined) return 'null';
+    try {
+      const v = typeof exposed === 'function' ? exposed() : exposed;
+      return (v === undefined ? null : stringify(v)) ?? 'null';
+    } catch (e) {
+      return stringify({ __error: String(e) });
+    }
+  };
+  addEventListener('agentos-host-request', (e) => {
+    e.stopImmediatePropagation();
+    const r = { frames, hasExposed: exposed !== undefined };
+    if (e.detail === 'state') r.state = stateJSON();
+    reply(stringify(r));
+  }, true);
 })();

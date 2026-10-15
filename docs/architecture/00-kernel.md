@@ -126,11 +126,11 @@ Agent 不持有授权记录：Agent 的运行默认拥有全部能力（创始�
 
 ## 4. 身份解析：每个入口怎样确定主体
 
-| 入口 | 主体怎样确定 | P0 现状 |
+| 入口 | 主体怎样确定 | 现状 |
 |---|---|---|
 | WebView 消息桥 | 宿主维护「WebView → (appId, 实例, core/ui)」绑定表；只接受主 frame，且 origin 的 host 等于 appId | 已校验 frame 和 origin |
-| `agentos://` scheme handler | 按**发起请求的 WebView** 查绑定表；URL 的 host 必须等于该 WebView 的 appId，否则 403 | **未校验，已实测可越界**（[tech-assessment.md](../research/tech-assessment.md) 第 2 节） |
-| 导航 | 主 frame 只允许导航到本应用的 origin 和 `about:blank` | 放行所有 `agentos:` |
+| `agentos://` scheme handler | 按**发起请求的 WebView** 查绑定表；URL 的 host 必须等于该 WebView 的 appId，否则 403 | 已校验（P1a 第一步，[03](03-app-runtime.md) 第 5 节）；P0 曾实测可越界（[tech-assessment.md](../research/tech-assessment.md) 第 2 节） |
+| 导航 | 主 frame 只允许导航到本应用的 origin 和 `about:blank` | 已限制（同上） |
 | 引擎 RPC | 引擎的请求必须带 `runId`，宿主核对它属于这个引擎进程的活动运行 | 只带 `appId` |
 | `aos` CLI | 宿主签发的会话令牌（存在权限为 0600 的文件里），本机终端里的调用视为 `user` | 未实现 |
 | 原生进程、VM 服务 | 宿主拉起时建立的 stdio 或 vsock 连接，连接即身份 | 未实现 |

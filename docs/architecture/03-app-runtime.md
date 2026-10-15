@@ -26,32 +26,42 @@
 
 | 机制 | 实现 | 代码 |
 |---|---|---|
-| 虚拟文件系统 | `agentos://<appId>/<path>` 映射到应用目录；每个应用的 host 不同，所以 origin 也各自独立；`index.html` 不存在时返回「正在生成」的占位页 | `App/Runtime/AppSchemeHandler.swift` |
+| 虚拟文件系统 | `agentos://<appId>/<path>` 映射到应用目录；每个应用的 host 不同，所以 origin 也各自独立；`index.html` 不存在时返回「正在生成」的占位页。每个请求按发起它的 WebView 校验 host（第 5 节） | `App/Runtime/AppSchemeHandler.swift` |
 | CSP 响应头 | `default-src 'none'; script-src agentos: 'unsafe-inline' blob:; style-src agentos: 'unsafe-inline'; img-src agentos: data: blob:; media-src agentos: data: blob:; font-src agentos: data:; connect-src agentos: data: blob:; worker-src agentos: blob:; base-uri 'none'; form-action 'none'` | 同上 |
 | 拦截外网 | `WKContentRuleList` 屏蔽 `^https?://` 和 `^wss?://`，作为 CSP 之外的第二道防线 | `App/Runtime/RuntimeManager.swift` |
-| 导航策略 | 只允许 `agentos:`、`about:`、`blob:`、`data:`；`window.open` 一律拒绝 | `RuntimeController` |
+| 导航策略 | 主 frame 只允许本应用的 origin 和 `about:blank`；子 frame 另外允许 `about:srcdoc`，其余由 CSP 的 `frame-src`（回落到 `'none'`）拦截；`window.open` 一律拒绝 | `RuntimeController` |
+| 关闭 WebRTC | 私有偏好 `_peerConnectionEnabled = false`；另有注入所有 frame 的脚本删除 `RTCPeerConnection` | `RuntimeManager` |
 | 存储隔离 | 每个应用一个 `WKWebsiteDataStore(forIdentifier: appUUID)`；删除应用时一并删除 | `RuntimeManager` |
 | 消息来源校验 | 只接受顶层 frame、且 origin 等于本应用的消息，因为沙箱 iframe 也能调用 messageHandlers（实测） | `RuntimeController.userContentController` |
 | 崩溃恢复 | WebContent 进程退出时，记一条错误日志并自动重载 | `webViewWebContentProcessDidTerminate` |
 
-**P0 实测出的问题**（[sandbox-probes/](../research/sandbox-probes/)），在 P1a 第一步修复，见第 5 节：
+**P0 实测出的问题**（[sandbox-probes/](../research/sandbox-probes/)）已在 P1a 第一步修复（第 5 节），`make sandbox-test` 防止回退：
 
-- scheme handler 不校验 host：应用导航到 `agentos://..`，就能同源读取 `~/Library/Application Support/AgentOS/` 下的任意文件（已实测读到 `meta/` 和 `logs/`）。
+- scheme handler 不校验 host：应用导航到 `agentos://..`，就能同源读取 `~/Library/Application Support/AgentOS/` 下的任意文件（已实测读到 `meta/` 和 `logs/`）；用 `<script src>` 还能执行其他应用的脚本。
 - 导航策略放行所有 `agentos:` URL，不限定本应用。
 - `RTCPeerConnection` 可用，CSP 和规则列表都管不到 WebRTC。
 - 宿主的测试钩子 `window.__agentos` 是可写的全局变量，宿主在 page world 里执行 `evaluate`，应用可以伪造自测结果。
 
-### 3.2 注入的 shim（`App/Runtime/agentos-shim.js`）
+### 3.2 注入的脚本
 
-页面一开始加载就注入到主 frame：
+页面一开始加载就注入到主 frame，分在两个 world：
+
+| 脚本 | world | 内容 |
+|---|---|---|
+| `App/Runtime/agentos-shim.js` | page world（和应用代码同处） | 捕获控制台和错误、统计帧数、键盘处理、应用 API `agentos.*` |
+| `App/Runtime/agentos-host.js` | 宿主自己的 `WKContentWorld`（`agentos-host`） | 测试钩子 `__agentos`（模拟输入、读帧数和状态）；宿主的 `evaluate` 也只在这里执行 |
+
+page world 里的 shim：
 
 - **捕获控制台和错误**：`console.*`、`error`（带文件、行号、调用栈）、`unhandledrejection`、`securitypolicyviolation`（报告「被 AgentOS 沙箱拦截」）。每秒最多上报 100 条，错误不受这个限制。
 - **统计帧数**：包装 `requestAnimationFrame`，用来判断渲染循环是否还在运行。
 - **键盘处理**：焦点不在输入框时，对按键 `preventDefault`，避免页面滚动和系统提示音；按钮和链接上的回车、空格不受影响。
-- **模拟输入**：`__agentos.key(type, key)` 会补齐 `code`、`keyCode` 和 `which`；`__agentos.click(x, y)` 依次派发 pointer、mouse、click 事件。
-- **应用 API**：`agentos.expose(fn)`，应用通过它把状态暴露给 Agent 的自测。
+- **应用 API**：`agentos.expose(fn)`，应用通过它把状态暴露给 Agent 的自测。P1a 的其余 `agentos.*`（见 [05](05-app-protocol.md) 第 7 节）也留在 page world，但它发出的消息不带任何权限，身份由宿主按 WebView 绑定判定（[00](00-kernel.md) 第 4 节）。
 
-P1a 起，shim 拆成两部分：**测试钩子**放进独立的 `WKContentWorld`（应用的代码碰不到）；**应用 API**（`agentos.*`，见 [05](05-app-protocol.md) 第 7 节）留在 page world，但它发出的消息不带任何权限，身份由宿主按 WebView 绑定判定（[00](00-kernel.md) 第 4 节）。
+宿主 world 里的测试钩子：
+
+- **模拟输入**：`__agentos.key(type, key)` 会补齐 `code`、`keyCode` 和 `which`；`__agentos.click(x, y)` 依次派发 pointer、mouse、click 事件。两个 world 共享 DOM，事件照常到达页面的监听器。`keyCode`、`which` 要写进 `KeyboardEvent` 的初始化字典（WebKit 仍接受这两个旧字段）；在宿主 world 的事件对象上 `defineProperty`，页面看不到（实测）。
+- **读帧数和状态**：两个 world 不共享 JS 对象。钩子向页面派发一个同步的 DOM 事件，shim 在应用代码运行前就注册了监听，回一个 JSON 字符串。帧数和 `expose` 的状态本来就由应用自己报告，应用可以谎报；content world 保护的是钩子本身和宿主执行的代码：应用无法替换 `__agentos`，也无法篡改宿主 `evaluate` 用到的 `JSON` 等内置对象。
 
 ### 3.3 生成物约定（写进 Builder 的系统提示）
 
@@ -156,14 +166,37 @@ Builder 修改 `core.js` 时：
 
 ## 5. 隔离加固（P1a 第一步）
 
-| # | 措施 | 解决什么 |
-|---|---|---|
-| 1 | **scheme handler 绑定 WebView**：URL 的 host 必须是注册表里存在的应用 ID（UUID），并且等于发起请求的 WebView 所属的应用；否则 403 | 越界读取宿主数据、读取其他应用的文件 |
-| 2 | **只服务应用目录**：开发中服务 `apps/<id>/src/`，版本化之后服务 `apps/<id>/current/`；宿主数据挪到 `system/`（[00](00-kernel.md) 第 9 节）；`/_lib/` 从 App 包里只读提供 | 同上，多一层保障 |
-| 3 | **导航只允许本应用的 origin 和 `about:blank`** | 借导航切换 origin |
-| 4 | **测试钩子放进独立的 content world**；`evaluate` 不再在 page world 里执行 | 应用伪造自测和契约测试结果 |
-| 5 | **关闭 WebRTC**：WKWebView 没有公开开关，AgentOS 不上 App Store，可以使用私有的 `_peerConnectionEnabled`；另用注入所有 frame 的脚本删除 `RTCPeerConnection` 作为补充 | 绕过 CSP 的外泄通道 |
-| 6 | **沙箱回归用例**：现有的 `sandbox-escape.html` 加上三个探针，放进 `tests/fixtures/`，`make sandbox-test` 一键运行，改动运行时必须全部通过 | 防止回退 |
+| # | 措施 | 解决什么 | 状态 |
+|---|---|---|---|
+| 1 | **scheme handler 绑定 WebView**：URL 的 host 必须是注册表里存在的应用 ID（UUID），并且等于发起请求的 WebView 所属的应用；否则 403 | 越界读取宿主数据、读取其他应用的文件 | ✅ |
+| 2 | **只服务应用目录**：开发中服务 `apps/<id>/src/`，版本化之后服务 `apps/<id>/current/`；宿主数据挪到 `system/`（[00](00-kernel.md) 第 9 节）；`/_lib/` 从 App 包里只读提供 | 同上，多一层保障 | 随目录迁移做 |
+| 3 | **导航只允许本应用的 origin 和 `about:blank`** | 借导航切换 origin | ✅ |
+| 4 | **测试钩子放进独立的 content world**；`evaluate` 不再在 page world 里执行 | 应用伪造自测和契约测试结果 | ✅ |
+| 5 | **关闭 WebRTC**：WKWebView 没有公开开关，AgentOS 不上 App Store，可以使用私有的 `_peerConnectionEnabled`；另用注入所有 frame 的脚本删除 `RTCPeerConnection` 作为补充 | 绕过 CSP 的外泄通道 | ✅ |
+| 6 | **沙箱回归用例**：现有的 `sandbox-escape.html` 加上三个探针，放进 `tests/fixtures/`，`make sandbox-test` 一键运行，改动运行时必须全部通过 | 防止回退 | ✅ |
+
+实现要点：
+
+| 项 | 做法 |
+|---|---|
+| 绑定表 | 在 `AppSchemeHandler` 里，按 WebView 对象记录 appId（弱引用，防止对象地址复用）。`RuntimeManager` 在首次加载前绑定、移除应用时解绑；没绑定的 WebView 一律 403。host 还必须是规范的小写 UUID，带端口的 URL 也拒绝 |
+| 符号链接 | 解析符号链接之后再判断文件是否在应用目录内，Agent 在应用目录里放的链接指不出去 |
+| `blob:`、`data:` | 主 frame 不再放行。现有用例和 Builder 约定都不需要；以后要导出文件，另做宿主中转的下载，不放开导航 |
+| 拦截记录 | 被拒的请求和导航写进事件日志（`scheme_request_denied`、`navigation_blocked`）；导航被拦时，应用控制台也会收到一条 error |
+| WebRTC 两层 | 分别去掉一层实测：只用私有偏好、只用脚本，主 frame、srcdoc iframe、新 iframe 的初始文档里都没有 `RTCPeerConnection`。私有偏好不存在时（WebKit 改名），记一条错误日志，只剩脚本这一层 |
+
+回归用例（`make sandbox-test`，运行器是 `scripts/sandbox-test.ts`）：
+
+| 用例 | 测什么 |
+|---|---|
+| `sandbox-escape.html` | `fetch`、远程 `import`、WebSocket 访问外网 |
+| `sandbox-probe1-egress-and-isolation.html` | 读取其他应用的文件和脚本（注册过的邻居应用、没注册的 ID）、`agentos://..` 越界读取、主 frame 和 iframe 里的 WebRTC、测试钩子在 page world 是否可见 |
+| `sandbox-probe2-iframe-traversal.html` | 用 iframe 在 `agentos://..` 下同源读取；WebRTC 收集候选 |
+| `sandbox-probe3-toplevel-traversal.html` | 主 frame 导航到 `agentos://..`、邻居应用、`data:` URL |
+
+运行器逐个用 `--selftest-runtime <用例> --selftest-neighbor` 启动 App（后一个参数让自测多建一个邻居应用，探针从 `selftest-context.json` 读到它的 ID），读 `logs/selftest-result.json` 里探针暴露的状态，按运行器里的期望逐项判定；探针没跑完也算失败，免得「什么都没测」被当成通过。三个探针由 [sandbox-probes/](../research/sandbox-probes/) 改写而来，只记录状态码、长度和布尔值。
+
+实测（M5 Pro / macOS 26.5）：22 项检查，在修复前的构建上 13 项失败（包括执行邻居应用的脚本、经顶层导航读到 `meta/<id>/manifest.json`），修复后全部通过；贪吃蛇自测照常通过（约 60 fps）。
 
 已知限制：同源的 srcdoc iframe 里，全局对象是干净的（shim 只注入主 frame）。任何「在 shim 里禁用某个 API」的做法，都要同时考虑 iframe；能在 WebKit 配置层面关掉的，不在 JS 层面做。
 

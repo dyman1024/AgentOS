@@ -66,6 +66,7 @@ make run
 |---|---|
 | `make build` | 编译。构建阶段会把 Agent 引擎和 claude 二进制打进 `AgentOS.app/Contents/Resources/engine/` |
 | `make selftest` | 不调用模型：把 [tests/fixtures/snake.html](tests/fixtures/snake.html) 载入运行时并跑冒烟测试，结果写入 `logs/selftest-result.json` |
+| `make sandbox-test` | 沙箱回归：逐个载入 `tests/fixtures/sandbox-*.html`，越界读取、跨应用读取、外网访问、WebRTC 任何一项没被拦截就失败 |
 | `make engine-check` | 对 Agent 引擎做 TypeScript 类型检查 |
 
 ### 调试开关

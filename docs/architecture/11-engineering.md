@@ -60,7 +60,7 @@ AgentOS/
 | `make run` | 编译并打开 App | P0 |
 | `make selftest` | 不调用模型，跑一遍运行时自测 | P0 |
 | `make engine-check` | TypeScript 类型检查 | P0 |
-| `make sandbox-test` | 跑全部沙箱回归用例，任何一项没被拦截就失败 | P1a |
+| `make sandbox-test` | 跑全部沙箱回归用例，任何一项没被拦截就失败 | P1a ✅ |
 | `make test` | XCTest 单元测试 | P1a |
 | `make eval SUITE=<名字>` | 跑评测集（需要真实 Key，会产生费用） | P1a |
 | `make clean` | 清理构建产物 | P0 |
@@ -72,6 +72,7 @@ AgentOS/
 | `AGENTOS_ENGINE_CMD="bun run $PWD/agent-engine/src/index.ts"` | 直接用源码运行引擎，改完引擎不用重新编译 App |
 | `AGENTOS_AUTOPROMPT="做个贪吃蛇"` / `AGENTOS_AUTOQUIT=1` | 启动后自动发送这条提示，完成后截图，然后退出 |
 | `--selftest-runtime <file.html>` | 把任意 HTML 当成应用，跑一遍运行时自测，结果写到 `logs/selftest-result.json` |
+| `--selftest-neighbor` | 配合上一项：自测时多建一个邻居应用，ID 写在被测应用目录的 `selftest-context.json` 里，供跨应用探针使用 |
 | `-provider openrouter` / `-provider anthropic` | 本次启动临时切换服务商，不写入设置 |
 | `ANTHROPIC_API_KEY` / `OPENROUTER_API_KEY` | 钥匙串里没有 Key 时，用这里的值 |
 | `AGENTOS_SELFTEST_KEEP=1` | 自测结束后保留临时应用，方便排查 |
@@ -82,7 +83,7 @@ AgentOS/
 | 层次 | 方式 | 状态 |
 |---|---|---|
 | 运行时 | `make selftest`：贪吃蛇用例要全部通过（约 60 fps） | ✅ |
-| **沙箱回归** | `make sandbox-test`：`sandbox-escape.html`（外网访问）加上三个探针（越界读取、跨应用读取、WebRTC、iframe、测试钩子），全部必须被拦截。探针来源见 [sandbox-probes/](../research/sandbox-probes/) | P1a |
+| **沙箱回归** | `make sandbox-test`：`tests/fixtures/sandbox-*.html`，即 `sandbox-escape.html`（外网访问）加上三个探针（越界读取、跨应用读取、顶层导航、WebRTC、测试钩子），全部必须被拦截。期望写在 `scripts/sandbox-test.ts`，新增用例必须同时写期望；探针来源见 [sandbox-probes/](../research/sandbox-probes/)，用例清单见 [03](03-app-runtime.md) 第 5 节 | ✅ |
 | 引擎 | `make engine-check`；用无效 Key 走完整链路，Anthropic 和 OpenRouter 都必须快速失败（约 8–11 s） | ✅ |
 | 单元测试 | XCTest：内核（有效权限、检查点决定、撤销）、数据层（乐观并发、历史、字段级撤销冲突）、总线（至少一次、游标、背压）、接口（schema 校验、兼容性比较、lint） | P1a |
 | 契约测试 | 每个应用的 `tests/contract.json`，由运行器在临时数据副本上执行（[05](05-app-protocol.md) 第 13 节） | P1a |
@@ -133,7 +134,7 @@ AgentOS/
 | # | 问题 | 方法 | 通过标准 | 影响 | 前置于 |
 |---|---|---|---|---|---|
 | S1 | 不在窗口里的 WKWebView 能否可靠地执行 JS | `inactiveSchedulingPolicy = .none`，测定时器、Promise、消息桥、`callAsyncJavaScript` 在不同可见性下的行为，以及每个实例的内存 | 工具调用 p95 延迟小于 200 ms；连续 1 小时不被挂起；每个实例的内存有明确数字 | 核心宿主的实现方式（[03](03-app-runtime.md) 第 4.2 节） | P1a |
-| S2 | 运行时加固 | 实现 [03](03-app-runtime.md) 第 5 节的六项措施，跑全部探针 | 三个探针加原有的 `sandbox-escape` 全部被拦截 | 安全底线 | P1a |
+| S2 | 运行时加固 | 实现 [03](03-app-runtime.md) 第 5 节的六项措施，跑全部探针 | 三个探针加原有的 `sandbox-escape` 全部被拦截（✅ 第 1、3–6 项已完成，`make sandbox-test` 全部通过；第 2 项随目录迁移完成） | 安全底线 | P1a |
 | S3 | Agent 面对大量工具的准确率 | 合成 50、100、200 个应用工具，对比「三个元工具」和「SDK 按需加载」 | 选出准确率和成本更好的一种 | 元工具设计（[05](05-app-protocol.md) 第 9 节） | P1b |
 | S4 | Builder 能否稳定地交付核心、接口和契约测试 | 按新的生成顺序，让 Builder 生成笔记、待办、书签、记账本各 10 次 | 契约测试一次通过率不低于 80%；接口覆盖率不低于 90% | Builder 提示词和模板（[02](02-agent.md) 第 3.3 节） | P1a 中期 |
 | S5 | 分发链路 | 打开 hardened runtime，对引擎和 claude 二进制签名并公证；接入 Sparkle；确认重新签名 claude 二进制符合 SDK 条款 | 公证通过，在一台干净的 Mac 上能启动并调用模型 | 引擎打包方式 | P1a |
