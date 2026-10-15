@@ -85,7 +85,10 @@ export class Peer {
     const waiter = this.pending.get(msg.id);
     if (!waiter) return;
     this.pending.delete(msg.id);
-    if (msg.error) waiter.reject(new Error(msg.error.message ?? 'Host error'));
+    if (msg.error) {
+      const detail = msg.error.data == null ? '' : '\n' + JSON.stringify(msg.error.data).slice(0, 16000);
+      waiter.reject(new Error((msg.error.message ?? 'Host error') + detail));
+    }
     else waiter.resolve(msg.result);
   }
 }

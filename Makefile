@@ -42,7 +42,7 @@ guest-test:
 check: core-test sandbox-test native-test guest-test engine-check build
 
 engine-check:
-	cd agent-engine && bunx tsc -p .
+	cd agent-engine && bunx tsc -p . && bun test
 
 clean:
 	rm -rf build AgentOS.xcodeproj agent-engine/dist

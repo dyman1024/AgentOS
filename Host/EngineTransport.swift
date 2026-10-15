@@ -186,9 +186,12 @@ import Foundation
           send(["jsonrpc": "2.0", "id": id, "result": result])
         } catch {
           guard generation == current else { return }
+          let diagnostic = (error as? HostError)?.details ?? .null
           send([
             "jsonrpc": "2.0", "id": id,
-            "error": ["code": -32000, "message": .string(error.localizedDescription)],
+            "error": [
+              "code": -32000, "message": .string(error.localizedDescription), "data": diagnostic,
+            ],
           ])
         }
       }

@@ -227,3 +227,5 @@ AgentOS.app ──Process + stdio（NDJSON，JSON-RPC 2.0）──▶ agentos-en
 Builder 默认生成 Web 应用，也收到原生 Swift 与 WASM 的文件、SDK 和测试约定。`workspace.write` 支持 UTF-8 或 base64 二进制资产，单文件不超过 2 MB。付费生成质量以 `evals/generation.py` 实跑结果为准；默认命令只打印计划，不调用模型。
 
 评测入口已建立：S3 比较元工具与 SDK Tool Search，记录是否真正使用了 Tool Search；不支持时标记不可比较，不当成该策略通过。S4 用四类独立任务逐项调用生成工具并核对共享数据，不以 Builder 自带测试代替接口覆盖率。S6 使用本地研究素材与真实模型/内核出口策略。三者默认 dry run，真实质量结果尚未产生。
+
+修复闭环必须接收失败用例和编译详情。JSON-RPC 保留结构化 diagnostics，SDK 工具错误文本限制 16000 字符；详情可能包含源码或私人测试数据，宿主先传播保守私人/诊断来源标签，实验性模型不接收这些内容。委托运行创建失败会退回父运行的预算预留。

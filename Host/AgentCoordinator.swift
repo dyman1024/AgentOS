@@ -49,13 +49,16 @@ import Foundation
     let parentReservation = try await parent.mapAsync {
       try await kernel.reserveBudget(allocated, context: $0)
     }
-    let id = try await kernel.startRun(
-      session: session, initiator: origin, role: role, summary: text,
-      budget: allocated, duration: 1800)
+    let id: String
+    do {
+      id = try await kernel.startRun(
+        session: session, initiator: origin, role: role, summary: text,
+        budget: allocated, duration: 1800)
+    } catch {
+      if let parentReservation { try? await kernel.settleBudget(parentReservation, actual: 0) }
+      throw error
+    }
     let context = RequestContext(.run(id), runID: id, depth: (parent?.depth ?? -1) + 1)
-    try await kernel.propagate(initialLabels, to: context)
-    if parent == nil { try await kernel.rememberUserLinks(text, context: context) }
-    if let parent { try await kernel.propagate(kernel.labels(for: parent), to: context) }
     if settings.restrictedModel { restricted.insert(id) }
     runs[id] = context
     let watchdog = Task { @MainActor [weak self] in
@@ -72,6 +75,9 @@ import Foundation
       restricted.remove(id)
     }
     do {
+      try await kernel.propagate(initialLabels, to: context)
+      if parent == nil { try await kernel.rememberUserLinks(text, context: context) }
+      if let parent { try await kernel.propagate(kernel.labels(for: parent), to: context) }
       if settings.restrictedModel, try await kernel.labels(for: context).isPrivate {
         throw HostError("denied", "实验性模型不能接收此会话中的私人数据；请使用新会话或受支持模型")
       }
@@ -137,6 +143,14 @@ import Foundation
         parent: context)
     } else {
       do { result = try await runtime.route(name, args: params, context: context) } catch {
+        // Contract/compiler diagnostics can contain generated source and private fixture values.
+        if let detail = (error as? HostError)?.details, detail != .null {
+          try await kernel.propagate(
+            Labels(taint: ["host:diagnostics"], isPrivate: true), to: context)
+        }
+        if restricted.contains(id), try await kernel.labels(for: context).isPrivate {
+          throw HostError("denied", "私人诊断内容不能交付给实验性模型")
+        }
         onUpdate?(
           id,
           [
