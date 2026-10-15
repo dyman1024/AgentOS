@@ -23,9 +23,10 @@
 | 文档 | 内容 |
 |---|---|
 | [概念介绍页（交互设计稿）](docs/design/README.md) | 产品概念、可交互原型、设计语言 |
-| [技术方案](docs/architecture/README.md) | 总览加 11 份模块分册，开发以此为准 |
+| [技术方案](docs/architecture/README.md) | 总览加 00–11 共 12 份分册，开发以此为准 |
 | [产品愿景](docs/vision/personal-agentos.md) | Personal AgentOS 的定位和设计原则 |
 | [调研记录](docs/README.md) | 方案对比、实测数据和实验代码 |
+| [AGENTS.md](AGENTS.md) | 给 AI Agent 和协作者的工作约定（全程中文、文档规则、常用命令） |
 
 ## 当前阶段：P0 原型
 

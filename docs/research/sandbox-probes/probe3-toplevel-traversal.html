@@ -1,0 +1,30 @@
+<!doctype html>
+<!-- Probe v3: top-level round trip. The app navigates itself to agentos://.. (allowed: scheme is agentos),
+     reads files under the AgentOS data root same-origin, then navigates back carrying the result in the URL fragment.
+     Only status/length is carried, never contents. -->
+<html><head><meta charset="utf-8"></head><body style="margin:0;background:#333">
+<canvas id="c" width="200" height="200"></canvas>
+<script type="module">
+const info = async (url) => {
+  try { const res = await fetch(url); const body = await res.text(); return { ok: res.ok, status: res.status, len: body.length }; }
+  catch (e) { return { error: String(e).slice(0, 120) }; }
+};
+const params = new URLSearchParams(location.search);
+if (location.host === '..') {
+  const id = params.get('id');
+  const out = {
+    origin: location.origin,
+    ownIndex: await info(`agentos://../apps/${id}/index.html`),
+    hostManifest: await info(`agentos://../meta/${id}/manifest.json`),
+    logsFile: await info('agentos://../logs/selftest-result.json'),
+  };
+  location.replace(`agentos://${id}/index.html#` + encodeURIComponent(JSON.stringify(out)));
+} else if (!location.hash) {
+  location.replace(`agentos://../apps/${location.host}/index.html?id=${location.host}`);
+} else {
+  const r = { appId: location.host, broughtBack: JSON.parse(decodeURIComponent(location.hash.slice(1))) };
+  agentos.expose(() => r);
+  const ctx = document.getElementById('c').getContext('2d'); let t = 0;
+  (function loop(){ ctx.fillStyle = `hsl(${t++%360},60%,50%)`; ctx.fillRect(0,0,200,200); requestAnimationFrame(loop); })();
+}
+</script></body></html>
