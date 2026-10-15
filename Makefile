@@ -1,7 +1,7 @@
 # Common development commands. The Xcode project is generated from project.yml by XcodeGen.
 APP := build/Build/Products/Debug/AgentOS.app
 
-.PHONY: project build run selftest engine-check clean
+.PHONY: project build run selftest sandbox-test engine-check clean
 
 project:
 	xcodegen generate --quiet
@@ -15,6 +15,11 @@ run: build
 # Loads tests/fixtures/snake.html into the runtime, runs a smoke test, writes logs/selftest-result.json.
 selftest: build
 	$(APP)/Contents/MacOS/AgentOS --selftest-runtime $(CURDIR)/tests/fixtures/snake.html
+
+# Runs every sandbox regression fixture (tests/fixtures/sandbox-*.html); fails if any escape attempt gets through.
+# Like selftest, it needs the AgentOS window to be visible.
+sandbox-test: build
+	bun scripts/sandbox-test.ts $(APP)
 
 engine-check:
 	cd agent-engine && bunx tsc -p .

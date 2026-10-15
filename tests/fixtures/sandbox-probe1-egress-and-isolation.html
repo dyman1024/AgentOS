@@ -1,0 +1,75 @@
+<!doctype html>
+<!-- Sandbox regression probe 1, adapted from docs/research/sandbox-probes/probe1-egress-and-isolation.html.
+     Tries cross-app and traversal reads, WebRTC (main frame and a same-origin iframe) and the host's test hooks.
+     Records only status codes / lengths / booleans, never file contents. Expectations: scripts/sandbox-test.ts.
+     Needs --selftest-neighbor, which puts the neighbor app's ID in selftest-context.json. -->
+<html><head><meta charset="utf-8"></head><body style="margin:0;background:#333">
+<canvas id="c" width="200" height="200"></canvas>
+<script type="module">
+const r = { appId: location.host };
+agentos.expose(() => r);
+// keep frames advancing so the smoke test's visual checks don't matter
+const ctx = document.getElementById('c').getContext('2d'); let t = 0;
+(function loop(){ ctx.fillStyle = `hsl(${t++%360},60%,50%)`; ctx.fillRect(0,0,200,200); requestAnimationFrame(loop); })();
+
+const fetchInfo = async (url) => {
+  try { const res = await fetch(url); const body = await res.text(); return { ok: res.ok, status: res.status, len: body.length }; }
+  catch (e) { return { error: String(e).slice(0, 120) }; }
+};
+const scriptProbe = (url) => new Promise((res) => {
+  const s = document.createElement('script');
+  s.src = url; s.onload = () => res('load'); s.onerror = () => res('error');
+  setTimeout(() => res('timeout'), 1500); document.head.appendChild(s);
+});
+
+// 0. Controls: the probe can still load its own files, so 'error' below means blocked rather than broken
+const context = await fetch('selftest-context.json').then((res) => res.json()).catch(() => ({}));
+const neighbor = context.neighborId;
+r.hasNeighbor = typeof neighbor === 'string';
+r.ownScript = await scriptProbe(`agentos://${r.appId}/index.html`);
+
+// 1. Cross-app read: a registered neighbor app, and an ID that is not registered at all
+r.neighborFetch = await fetchInfo(`agentos://${neighbor}/secret.js`);
+r.neighborScript = await scriptProbe(`agentos://${neighbor}/secret.js`);
+r.neighborSecretLeaked = window.__neighborSecret === true;
+r.unregisteredScript = await scriptProbe('agentos://00000000-0000-0000-0000-000000000000/index.html');
+
+// 2. Host traversal: '..' as host maps to the AgentOS data root; target is this probe's own index.html
+r.traversalFetch = await fetchInfo(`agentos://../apps/${r.appId}/index.html`);
+r.traversalScriptExisting = await scriptProbe(`agentos://../apps/${r.appId}/index.html`);
+r.traversalScriptMissing = await scriptProbe(`agentos://../apps/${r.appId}/does-not-exist.js`);
+
+// 3. WebRTC: a server-reflexive ICE candidate means a STUN packet reached an external server and came back
+r.rtcAvailable = typeof RTCPeerConnection !== 'undefined' || typeof webkitRTCPeerConnection !== 'undefined';
+if (r.rtcAvailable) {
+  r.rtc = await new Promise(async (res) => {
+    const types = new Set();
+    try {
+      const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+      pc.createDataChannel('x');
+      pc.onicecandidate = (e) => { if (e.candidate) types.add(e.candidate.type || (e.candidate.candidate.match(/ typ (\w+)/) || [])[1]); };
+      await pc.setLocalDescription(await pc.createOffer());
+      setTimeout(() => { res({ candidateTypes: [...types], srflx: types.has('srflx') }); pc.close(); }, 2200);
+    } catch (e) { res({ error: String(e).slice(0, 120) }); }
+  });
+}
+
+// 4. Same-origin iframe gets pristine globals the main-frame shim never touched (known limitation);
+//    WebRTC must be off there too, which is why it is disabled in WebKit's settings rather than in the shim
+const f = document.createElement('iframe'); f.srcdoc = '<p>x</p>'; document.body.appendChild(f);
+await new Promise((ok) => (f.onload = ok));
+try {
+  r.iframeSameOrigin = true;
+  r.iframeHasShim = !!f.contentWindow.agentos;
+  r.iframeRtcAvailable = typeof f.contentWindow.RTCPeerConnection !== 'undefined';
+} catch { r.iframeSameOrigin = false; }
+// The initial about:blank document of a fresh iframe is reachable synchronously, before any user script runs in it
+const g = document.createElement('iframe'); document.body.appendChild(g);
+r.blankIframeRtcAvailable = typeof g.contentWindow.RTCPeerConnection !== 'undefined';
+
+// 5. Test hooks: must not be reachable from the page world at all
+r.hooksVisible = '__agentos' in window;
+r.hooksWritable = Object.getOwnPropertyDescriptor(window, '__agentos')?.writable === true;
+r.done = true;
+console.log('probe', JSON.stringify(r));
+</script></body></html>

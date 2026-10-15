@@ -3,6 +3,8 @@ import AppKit
 /// Development hooks for driving the app without the UI.
 ///
 ///   --selftest-runtime <file.html>   load an HTML file as a temporary app, run a smoke test, print JSON, quit
+///   --selftest-neighbor              with --selftest-runtime: also create a second app for cross-app probes;
+///                                    its ID is in selftest-context.json in the tested app's folder
 ///   AGENTOS_AUTOPROMPT="做个贪吃蛇"   send this prompt to a new app at launch
 ///   AGENTOS_AUTOQUIT=1               quit after the auto prompt finishes
 ///
@@ -18,7 +20,7 @@ enum DevAutomation {
         NSApp.windows.first { $0.isVisible }?.orderFrontRegardless()
 
         if let i = args.firstIndex(of: "--selftest-runtime"), i + 1 < args.count {
-            await selfTestRuntime(model, html: URL(fileURLWithPath: args[i + 1]))
+            await selfTestRuntime(model, html: URL(fileURLWithPath: args[i + 1]), neighbor: args.contains("--selftest-neighbor"))
             NSApp.terminate(nil)
             return
         }
@@ -31,10 +33,11 @@ enum DevAutomation {
         }
     }
 
-    private static func selfTestRuntime(_ model: AppModel, html: URL) async {
+    private static func selfTestRuntime(_ model: AppModel, html: URL, neighbor withNeighbor: Bool) async {
         let manifest = model.registry.create()
         model.registry.update(manifest.id) { $0.title = "selftest: \(html.lastPathComponent)"; $0.icon = "🧪" }
         try? FileManager.default.copyItem(at: html, to: Paths.appDir(manifest.id).appendingPathComponent("index.html"))
+        let neighbor = withNeighbor ? createNeighbor(model, for: manifest.id) : nil
         model.open(manifest.id)
         try? await Task.sleep(for: .seconds(1))  // let SwiftUI put the web view into the window
 
@@ -50,11 +53,34 @@ enum DevAutomation {
             ],
         ])
         let shot = await saveScreenshot(model, appId: manifest.id, name: "selftest")
-        let report: JSON = ["appId": .string(manifest.id), "run_app": run, "smoke_test": smoke, "screenshot": shot.map(JSON.string) ?? .null]
+        let report: JSON = [
+            "appId": .string(manifest.id), "fixture": .string(html.lastPathComponent),
+            "neighborId": neighbor.map(JSON.string) ?? .null,
+            "run_app": run, "smoke_test": smoke, "screenshot": shot.map(JSON.string) ?? .null,
+            // Everything the app logged, including the sandbox's own "blocked" reports, for diagnosing failures.
+            "console": controller.consoleEntries(["limit": 300])["entries"] ?? .null,
+        ]
         let out = Paths.logs.appendingPathComponent("selftest-result.json")
         try? report.data(pretty: true).write(to: out)
         Log.event("selftest_done", ["result": .string(out.path)])
-        if ProcessInfo.processInfo.environment["AGENTOS_SELFTEST_KEEP"] != "1" { model.delete(manifest.id) }
+        if ProcessInfo.processInfo.environment["AGENTOS_SELFTEST_KEEP"] != "1" {
+            model.delete(manifest.id)
+            if let neighbor { model.delete(neighbor) }
+        }
+    }
+
+    /// A second registered app for sandbox probes to attack: a page that marks itself if it ever loads in the
+    /// tested app's web view, and a script that leaks a marker into whoever runs it.
+    private static func createNeighbor(_ model: AppModel, for appId: String) -> String {
+        let neighbor = model.registry.create()
+        model.registry.update(neighbor.id) { $0.title = "selftest: neighbor"; $0.icon = "🧪" }
+        let dir = Paths.appDir(neighbor.id)
+        try? Data("<!doctype html><script>agentos.expose({ neighborPage: true })</script>".utf8)
+            .write(to: dir.appendingPathComponent("index.html"))
+        try? Data("window.__neighborSecret = true;".utf8).write(to: dir.appendingPathComponent("secret.js"))
+        let context: JSON = ["neighborId": .string(neighbor.id)]
+        try? context.data(pretty: true).write(to: Paths.appDir(appId).appendingPathComponent("selftest-context.json"))
+        return neighbor.id
     }
 
     @discardableResult
