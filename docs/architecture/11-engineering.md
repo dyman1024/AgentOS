@@ -1,147 +1,94 @@
 # 11 工程体系
 
-> 所属：[技术方案总览](README.md)
+> 所属：[技术方案总览](README.md)。重建工程的当前入口，旧 P0 命令不再适用。完整阶段状态见 [12](12-rebuild-plan.md)。
 
-## 1. 仓库结构
+## 1. 模块与构建
 
-```
-AgentOS/
-├── AGENTS.md                # 给 AI Agent 和协作者的工作约定（全程中文、文档规则、常用命令）
-├── CLAUDE.md                # 只有一行 @AGENTS.md，让 Claude Code 读到同一份约定
-├── App/                     # Swift 宿主（SwiftUI + AppKit）
-│   ├── AgentOSApp.swift     # 入口、主窗口、工具栏、菜单命令
-│   ├── AppModel.swift       # 根状态：串联对话、引擎和运行时
-│   ├── Agent/               # EngineClient：引擎子进程和 JSON-RPC
-│   ├── Apps/                # 应用注册表、启动台
-│   ├── Chat/                # 对话模型和视图
-│   ├── Runtime/             # 界面 WebView、scheme、shim、自测工具、截图分析；P1a 增加核心宿主
-│   ├── Settings/            # 服务商、模型、Key（钥匙串、在线校验）、OpenRouter 模型目录
-│   ├── Support/             # JSON、目录路径、日志
-│   ├── Dev/                 # 开发自动化（自测、自动发送提示）
-│   ├── Kernel/              # P1a：主体、授权、运行、副作用记录、检查点、审计（00）
-│   ├── Data/                # P1a：数据层（08）
-│   ├── Protocol/            # P1a：接口注册表、路由、元工具（05）
-│   ├── Bus/                 # P1b：事件总线（06）
-│   └── Services/            # P2：系统服务和出口（07）
-├── agent-engine/            # Agent 引擎（TypeScript，Claude Agent SDK，Bun 编译）
-│   └── src/                 # index.ts、rpc.ts、prompt.ts、runtimeTools.ts、partialJson.ts
-├── AppTests/                # P1a：XCTest（内核、数据层、总线、接口校验）
-├── scripts/bundle-engine.sh # Xcode 构建阶段：编译引擎，复制 claude 二进制
-├── tests/fixtures/          # 运行时自测用例和沙箱回归用例
-├── evals/                   # P1a：评测集（提示、期望、评分脚本）
-├── Config/AgentOS.xcconfig  # 签名配置（可以 include 一个 Local.xcconfig）
-├── project.yml              # XcodeGen 工程定义（.xcodeproj 不入库）
-├── Makefile
-└── docs/
-    ├── architecture/        # 技术方案（总览加 00–11 分册，本文所在目录）
-    ├── research/            # 调研记录、评估和实验代码
-    ├── vision/              # 愿景
-    └── design/              # 交互设计稿
+| 路径 | 责任 |
+|---|---|
+| `Host/` | SwiftUI/AppKit 外壳、模型、账户、个人服务、后台交接和恢复 |
+| `Sources/AgentOSCore/` | SQLite 内核、数据、授权、标签、事件、版本、自动化和确定性服务 |
+| `Sources/AgentOSRuntime/` | WebKit 核心/UI、SDK、原生编译与沙箱、正文解析、VM/后端 |
+| `Sources/RuntimeChecks/`、`NativeChecks/`、`VMChecks/` | 实际框架与隔离集成测试 |
+| `Sources/aos/` | 随 App 打包的 CLI，通过认证 Unix socket 使用宿主 |
+| `agent-engine/src/rebuild.ts` | Claude Agent SDK / Bun sidecar，仅提供宿主工具 |
+| `ui-kit/` | 锁版本浏览器库构建；包括界面组件、编辑器、图表、MIME 解析 |
+| `vm/` | arm64 Linux 开发镜像、vsock 来宾代理和 OCI 处理 |
+| `evals/` | 真实模型 S4/S6 评测；S3 入口在 agent-engine |
+| `App/`、旧引擎 index.ts | 原型背景，不参与默认构建 |
+
+要求 Apple Silicon、macOS 26、Xcode 26.6、Swift 6、Bun 1.3.14、XcodeGen。本机实测 macOS 26.5.1 / Swift 6.3.3。
+
+依赖锁定：Bun lockfile、Sparkle 2.10.0 精确版本。SQLite、WebKit、Virtualization、NaturalLanguage、EventKit 与 Contacts 使用系统框架。UI 库由 `make ui-kit` 生成并复制到 Bundle，不提交生成文件。
+
+```bash
+cd agent-engine
+bun install --frozen-lockfile
+cd ..
+make run
 ```
 
-## 2. 构建
+## 2. 验证入口
 
-| 项 | 说明 |
-|---|---|
-| 环境 | **macOS 26 及以上**（P1a 起；P0 是 15）、Xcode 26、XcodeGen、Bun |
-| 工程 | `project.yml` 由 XcodeGen 生成 `AgentOS.xcodeproj`；Swift 6，默认 MainActor 隔离，开启 Approachable Concurrency |
-| 依赖 | P1a 起通过 SwiftPM 引入 GRDB.swift（SQLite），在 `project.yml` 的 `packages` 里锁定版本 |
-| 引擎打包 | 构建后执行 `scripts/bundle-engine.sh`：用 `bun build --compile` 把引擎打成单文件，再把 `@anthropic-ai/claude-agent-sdk-darwin-arm64/claude` 复制到 `Contents/Resources/engine/`，最后清理 Bun 留下的 `.*.bun-build` 临时文件 |
-| 签名 | 默认 ad-hoc；想用自己的证书，就在 `Config/Local.xcconfig`（不入库）里设置 `CODE_SIGN_IDENTITY` 和 `DEVELOPMENT_TEAM`。ad-hoc 签名在每次重新编译后都会变，访问钥匙串时可能需要重新允许 |
-| Hardened runtime | 现在是关闭的（`ENABLE_HARDENED_RUNTIME: NO`）。公证要求打开，P1a 通过 S5 验证后打开 |
-| 产物体积 | 约 300 MB，其中 claude 二进制约 248 MB，引擎约 65 MB |
-
-常用命令（[Makefile](../../Makefile)）：
-
-| 命令 | 作用 | 阶段 |
+| 命令 | 验证范围 | 是否付费/需要账户 |
 |---|---|---|
-| `make project` | 生成 Xcode 工程 | P0 |
-| `make build` | 编译 | P0 |
-| `make run` | 编译并打开 App | P0 |
-| `make selftest` | 不调用模型，跑一遍运行时自测 | P0 |
-| `make engine-check` | TypeScript 类型检查 | P0 |
-| `make sandbox-test` | 跑全部沙箱回归用例，任何一项没被拦截就失败 | P1a ✅ |
-| `make test` | XCTest 单元测试 | P1a |
-| `make eval SUITE=<名字>` | 跑评测集（需要真实 Key，会产生费用） | P1a |
-| `make clean` | 清理构建产物 | P0 |
+| `make core-test` | 54 项 Swift Testing：事务、撤销、权限、预算、事件、迁移、包、HTTP、文件、邮件、MCP | 否 |
+| `make selftest` | 真实 WebKit 核心、协议、事件、自动化、WASM、解析、UI Kit | 否 |
+| `make sandbox-test` | 上述集成及所有 `sandbox-*.html` 探针 | 否 |
+| `make native-test` | swiftc、Seatbelt、共享数据调用、进程退出与恢复 | 否；需要 CLT |
+| `make guest-test` | OCI 布局/摘要/架构/目录边界与来宾语法 | 否 |
+| `make engine-check` | TypeScript 类型检查 | 否 |
+| `make build` | UI Kit、XcodeGen、Debug 宿主、引擎与 CLI 打包 | 否 |
+| `make check` | core-test、sandbox-test、native-test、guest-test、engine-check、build | 否 |
+| `make release-test` | hardened ad-hoc Release、引擎/Claude 启动、Release 前后台交接 | 否；不调用模型 |
+| `make background-test` | 真实独立前后台进程的排他租约交接与持久化 | 否；不注册登录项 |
+| [VMChecks](../../vm/README.md) | 真实 VM、出站、Node/OCI 后端、冷恢复 | 无模型费；需要镜像和授权 HTTPS 网络 |
 
-## 3. 开发开关
+测试使用独立临时根目录。WebKit 核心采用无窗口宿主和 `inactiveSchedulingPolicy = .none`。自动测试不等于真实窗口视觉与点击验收。UI 沙箱探针仍需完整通过，不得只跑内核测试代替。
 
-| 开关 | 作用 |
+## 3. 配置与诊断
+
+| 配置 | 含义 |
 |---|---|
-| `AGENTOS_ENGINE_CMD="bun run $PWD/agent-engine/src/index.ts"` | 直接用源码运行引擎，改完引擎不用重新编译 App |
-| `AGENTOS_AUTOPROMPT="做个贪吃蛇"` / `AGENTOS_AUTOQUIT=1` | 启动后自动发送这条提示，完成后截图，然后退出 |
-| `--selftest-runtime <file.html>` | 把任意 HTML 当成应用，跑一遍运行时自测，结果写到 `logs/selftest-result.json` |
-| `--selftest-neighbor` | 配合上一项：自测时多建一个邻居应用，ID 写在被测应用目录的 `selftest-context.json` 里，供跨应用探针使用 |
-| `-provider openrouter` / `-provider anthropic` | 本次启动临时切换服务商，不写入设置 |
-| `ANTHROPIC_API_KEY` / `OPENROUTER_API_KEY` | 钥匙串里没有 Key 时，用这里的值 |
-| `AGENTOS_SELFTEST_KEEP=1` | 自测结束后保留临时应用，方便排查 |
-| `AGENTOS_DATA_ROOT=<目录>`（P1a） | 把整个数据根目录换到别处，用于测试和评测，不碰真实数据 |
+| `AGENTOS_DATA_ROOT` | 隔离根目录；默认 `~/Library/Application Support/AgentOS-Rebuild/` |
+| `AGENTOS_ENGINE_CMD="bun run $PWD/agent-engine/src/rebuild.ts"` | 引擎源码调试入口 |
+| `AGENTOS_SAFE_MODE=1` | 进入恢复模式，停用生成桌面与自动化 |
+| `AGENTOS_EVAL=1` | 仅在显式隔离的 `agentos-eval-*` 数据根允许评测 RPC |
+| `ANTHROPIC_API_KEY` / `OPENROUTER_API_KEY` | 钥匙串中无凭据时的开发环境回退 |
+| `BRAVE_SEARCH_API_KEY` / `AGENTOS_GITHUB_TOKEN` | 系统服务凭据回退；生成应用不可读取 |
 
-## 4. 测试与评测
+诊断先看宿主活动详情和通知，再看 `system/kernel.sqlite` 中运行、副作用、事件与审计；Agent SDK 配置和会话位于 `system/agent/`，映射位于 `system/agent-sessions.json`。会话和调试日志可能含私人内容，不应直接贴到公共 issue。
 
-| 层次 | 方式 | 状态 |
-|---|---|---|
-| 运行时 | `make selftest`：贪吃蛇用例要全部通过（约 60 fps） | ✅ |
-| **沙箱回归** | `make sandbox-test`：`tests/fixtures/sandbox-*.html`，即 `sandbox-escape.html`（外网访问）加上三个探针（越界读取、跨应用读取、顶层导航、WebRTC、测试钩子），全部必须被拦截。期望写在 `scripts/sandbox-test.ts`，新增用例必须同时写期望；探针来源见 [sandbox-probes/](../research/sandbox-probes/)，用例清单见 [03](03-app-runtime.md) 第 5 节 | ✅ |
-| 引擎 | `make engine-check`；用无效 Key 走完整链路，Anthropic 和 OpenRouter 都必须快速失败（约 8–11 s） | ✅ |
-| 单元测试 | XCTest：内核（有效权限、检查点决定、撤销）、数据层（乐观并发、历史、字段级撤销冲突）、总线（至少一次、游标、背压）、接口（schema 校验、兼容性比较、lint） | P1a |
-| 契约测试 | 每个应用的 `tests/contract.json`，由运行器在临时数据副本上执行（[05](05-app-protocol.md) 第 13 节） | P1a |
-| 端到端 | `AGENTOS_AUTOPROMPT` 自动生成应用，检查截图和日志 | ✅（需要真实 Key） |
-| **评测集** | 游戏 10 个；协议应用（笔记、待办、书签、记账本）；Operator 跨应用任务；P2 起加注入用例（[02](02-agent.md) 第 4 节） | P1a 起 |
+引擎 stdio 有帧/队列上限和请求超时；主运行 30 分钟截止，取消超过 10 秒结束 sidecar。预算预留在未知结果时保守结算，实际用量到达后可核对一次。外部写入的 unknown 状态不自动重发。
 
-**评测指标：**
+## 4. 技术验证与质量门槛
 
-| 指标 | 定义 |
-|---|---|
-| 一次通过率 | 不经用户干预，冒烟测试和契约测试都通过 |
-| 首次可用时间 | 从发出请求到应用可用 |
-| 单个应用的成本 | 宿主记账的费用（[00](00-kernel.md) 第 10 节） |
-| 修复轮数 | 自测失败后修复的轮数 |
-| **接口覆盖率** | 评测脚本列出的界面任务中，只通过接口（`apps.call` / `data.*`）就能完成的比例 |
-| 注入拦截率（P2） | 注入用例中，没有出现未经确认的出口调用的比例 |
-| 每任务确认次数（P2） | 正常任务平均弹出的确认框数量，目标小于 1 |
+| 编号 | 方法 | 通过标准 | 当前结果 |
+|---|---|---|---|
+| S1 | 无窗口核心持续调用，分别测宿主和 WebContent 内存 | 连续 1 小时、p95<200 ms、内存有数据 | 通过：3600 秒/721 次/零失败，p95 13.316 ms；[结果](../verification/2026-10-16-core-host-memory.json) |
+| S2 | scheme、CSP、导航、iframe、消息桥和 WebRTC 探针 | 所有越界访问被阻断；自身核心与数据操作正常 | 本地通过 |
+| S3 | 50/100/200 工具 × 元工具/SDK Tool Search × 10 任务 | 两策略实际可比较，准确率/费用/时延有完整记录 | 入口及 dry run 已验证；未调用真实模型 |
+| S4 | 笔记、待办、书签、记账各 10 次生成 | 首次提交成功率≥80%；独立任务接口覆盖≥90% | 入口及 dry run 已验证；未实跑 |
+| S5 | hardened runtime、Developer ID、公证、Sparkle、干净 Mac | 安装、Gatekeeper、升级、模型调用通过，SDK 再分发条件确认 | ad-hoc Release 构建/签名本地通过；正式发行未通过 |
+| S6 | 20 个研究整理任务，固定素材、真实模型与真实出口策略 | 全部保存文档与引用，平均确认<1，没有越权出口 | 入口及 dry run 已验证；未实跑 |
+| S7 | 真 VM 无网卡、伪造令牌/未授权域名、允许的宿主出口 | 无法绕过出口策略；允许的请求实际成功 | 本地通过；包含 Node/OCI 隔离后端 |
 
-## 5. 日志与诊断
+S4 的独立任务测试直接调用生成应用的 IDL，核对新增/修改/删除/检索/分类/排序/去重/汇总；应用自己编写的契约通过不会自动计作覆盖率 100%。S6 使用本地素材消除搜索结果漂移，不能代替真实网页质量与真实账户验收。运行方式见 [评测说明](../../evals/README.md)。
 
-| 位置（`~/Library/Application Support/AgentOS/system/`，P0 在上一级目录） | 内容 |
-|---|---|
-| `logs/agentos-<时间>.jsonl` | 宿主事件，每次启动一个文件：`launched`、`engine_started`、`engine_stderr`、`prompt`、`prompt_result`、`runtime_call`、`smoke_test`、`error`…… |
-| `logs/selftest-*.json` / `*.png` | 自测结果和截图 |
-| `agent/projects/<cwd>/<session>.jsonl` | Agent SDK 的会话记录，包括 API 错误和重试的详情 |
-| `kernel.sqlite` | 运行、副作用记录、审计（P1a 起） |
-| `meta/<appId>/` | 对话记录 |
+## 5. 持续集成
 
-排查问题时，先看 `logs/`，再看 `agent/` 里对应会话的 `api_error`，再按 `runId` 查 `kernel.sqlite`。
+`.github/workflows/rebuild.yml` 使用 macOS 26 / Xcode 26.6、固定 SHA 的 checkout/setup-bun、冻结 Bun 依赖；运行 `make check`、前后台交接及所有免费评测预检。没有模型 Key，不进行付费请求。远端 CI 结果在 PR 中单独记录；本地通过不代替远端结果。工具链参考 [官方 runner 清单](https://github.com/actions/runner-images/blob/main/images/macos/macos-26-arm64-Readme.md)。
 
-## 6. 持续集成（P1a）
+## 6. 发行
 
-- GitHub Actions，`macos-26` runner（公开仓库免费）。
-- 每个 PR：`make build`、`make test`、`make engine-check`、`make sandbox-test`。
-- `make selftest` 和 `make sandbox-test` 需要窗口可见（WebKit 会暂停不可见的页面）。GitHub 的 macOS runner 有图形会话，预计可以运行，需要在接入时验证；不行就改为在合并前本地运行，并在 PR 模板里勾选。
-- 评测集不在 CI 里跑（需要真实 Key、会产生费用），每周或改动 Builder 提示词时手动运行，结果记录到 `evals/results/`。
+Debug 使用 ad-hoc；Release 打开 hardened runtime，并对 Bun 引擎、Claude sidecar 和 aos 分别签名。默认不配置在线更新。Sparkle 只有在 HTTPS feed 与 32 字节 Ed25519 公钥齐备时启用，参见 [Sparkle 官方说明](https://sparkle-project.org/documentation/)。
 
-## 7. 协作流程
+`scripts/release.py --help` 列出所需身份与参数。脚本依次 archive/export、严格签名验证、notarytool、stapler、spctl、打 ZIP；不发布上传。生成签名 appcast、更新服务托管、SDK 再分发条款核实和干净 Mac 安装/升级/真实模型调用仍是发行前置条件。
 
-- **工作约定**写在根目录的 [AGENTS.md](../../AGENTS.md)：全程中文回复、文档规则、常用命令。
-- **分支**：新功能在 `feat/*` 分支开发，文档在 `docs/*` 分支，通过 PR 合入 `main`。
-- **提交**：提交说明用英文的 conventional commits 格式（`feat:`、`fix:`、`docs:`……）；由 Claude 参与的提交，结尾带上 `Co-Authored-By` 署名。PR 描述用中文。
-- **文档**：`docs/architecture/` 是正式方案，修改设计时同步更新对应分册，并在总览里补一条决策记录；调研和评估记录在 `docs/research/`，已有文件不再修改。
-- **仓库**：https://github.com/dyman1024/AgentOS （公开仓库，提交前确认没有 Key、本机路径等敏感信息）。
+工作间镜像与 App 分开签名：`scripts/sign-workbench-image.swift` 对镜像清单签名；客户端下载时验证独立配置的公钥、SHA-256 和长度。开发用 LinuxKit 内核不被视为已确定的公开发行内核。
 
-## 8. 技术验证清单（动工前）
+## 7. 协作与完成定义
 
-| # | 问题 | 方法 | 通过标准 | 影响 | 前置于 |
-|---|---|---|---|---|---|
-| S1 | 不在窗口里的 WKWebView 能否可靠地执行 JS | `inactiveSchedulingPolicy = .none`，测定时器、Promise、消息桥、`callAsyncJavaScript` 在不同可见性下的行为，以及每个实例的内存 | 工具调用 p95 延迟小于 200 ms；连续 1 小时不被挂起；每个实例的内存有明确数字 | 核心宿主的实现方式（[03](03-app-runtime.md) 第 4.2 节） | P1a |
-| S2 | 运行时加固 | 实现 [03](03-app-runtime.md) 第 5 节的六项措施，跑全部探针 | 三个探针加原有的 `sandbox-escape` 全部被拦截（✅ 第 1、3–6 项已完成，`make sandbox-test` 全部通过；第 2 项随目录迁移完成） | 安全底线 | P1a |
-| S3 | Agent 面对大量工具的准确率 | 合成 50、100、200 个应用工具，对比「三个元工具」和「SDK 按需加载」 | 选出准确率和成本更好的一种 | 元工具设计（[05](05-app-protocol.md) 第 9 节） | P1b |
-| S4 | Builder 能否稳定地交付核心、接口和契约测试 | 按新的生成顺序，让 Builder 生成笔记、待办、书签、记账本各 10 次 | 契约测试一次通过率不低于 80%；接口覆盖率不低于 90% | Builder 提示词和模板（[02](02-agent.md) 第 3.3 节） | P1a 中期 |
-| S5 | 分发链路 | 打开 hardened runtime，对引擎和 claude 二进制签名并公证；接入 Sparkle；确认重新签名 claude 二进制符合 SDK 条款 | 公证通过，在一台干净的 Mac 上能启动并调用模型 | 引擎打包方式 | P1a |
-| S6 | 确认框频率 | 在会话级污点的定义下，跑 20 个研究和整理类任务 | 每个任务平均确认次数小于 1 | 出口策略（[09](09-security.md) 第 4 节） | P2 |
-| S7 | VM 出站控制 | 不给 VM 直通网卡，用宿主侧用户态网络栈执行白名单 | VM 里的进程无法绕过白名单访问外网 | VM 网络设计（[10](10-workbench-vm.md) 第 3 节） | P3 |
+遵循 [AGENTS.md](../../AGENTS.md)：中文沟通、`feat/*` 分支、conventional commit 英文标题、中文 PR 描述；修改设计同步分册和总览决策。调研记录不可修改。公开提交不包含 Key、本机用户路径、测试数据和镜像。
 
-## 9. 发布（规划）
-
-- AgentOS 本体：用 Developer ID 签名并公证，用 Sparkle 做自动更新（Ed25519 签名），在官网直接分发。前提是 S5 通过。
-- 应用的签名与 AgentOS 本体的签名严格分开（[04](04-app-package.md) 第 9 节）。
+完成阶段需要对应的证据。未配置、未实跑、平台失败分别记录，不能计作通过。当前交付及未通过项见 [重建方案](12-rebuild-plan.md) 与 [验收记录](../verification/2026-10-16-rebuild.md)。

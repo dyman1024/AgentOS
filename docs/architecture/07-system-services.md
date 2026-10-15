@@ -52,7 +52,7 @@ const summary = await agentos.ai.complete({ prompt: '总结这封邮件', input:
 ### 3.2 `web`、`browser`、`net`：联网
 
 - **`web.search`**：返回结构化结果（标题、链接、摘要），标记为 `trust=untrusted`。搜索服务的选择见第 6 节。
-- **`web.fetch`**：在一个**隐藏的 WKWebView** 里加载页面，用非持久化的数据存储（不带用户的登录状态），在独立的 content world 里运行正文提取（Readability），返回 Markdown 和标题、链接列表，标记为 `trust=untrusted`。
+- **`web.fetch`**：先经宿主 HTTPS 出口抓取 HTML，再在**隐藏的 WKWebView** 里用非持久化数据存储、禁用页面脚本和网络的配置解析。独立 content world 运行 Readability，返回正文 Markdown、标题、链接列表，标记为 `trust=untrusted`。
   - 不需要 VM：网页脚本跑在 Apple 沙箱化的 WebContent 进程里，本来就不在宿主进程里执行。
   - 宿主记录每个运行里出现过的 URL，供 `fetch` 的三要素判定使用（[09](09-security.md) 第 4.2 节）。
 - **`browser.open(url)`**：打开浏览器视图组件，一个正常的 WKWebView，不受应用沙箱限制，但与应用和宿主隔离。普通网站禁止被 iframe 嵌入，所以「上网」必须靠这个组件。在浏览器里登录的状态属于用户，应用和 Agent 都读不到；Agent 想读当前页面的内容，要用户点「把这一页交给 Agent」，内容标为不可信。
@@ -122,3 +122,30 @@ const summary = await agentos.ai.complete({ prompt: '总结这封邮件', input:
 - 后台辅助进程会带来常驻资源消耗，还有登录项的系统授权问题。
 - 第三方 MCP 驱动的质量和安全性良莠不齐，默认按低信任处理。
 - **待定：搜索服务。** 选项有三：① Anthropic 直连时用模型自带的服务端网页搜索（结果不经过宿主，无法打标签，也拿不到 URL 列表，需要评估能否接入第 3.2 节的机制）；② 用户自带搜索 API Key（例如 Brave Search API），由宿主调用，结果可控；③ 经 OpenRouter 的联网能力（未核实）。建议 P2 以 ② 为主，① 作为可选。
+
+## 7. 重建实现与配置（2026-10-16）
+
+- `web.search` 使用用户提供的 Brave Search API Key；搜索配额每日 100 次。凭据保存在钥匙串，只由宿主附加到请求头。
+- `net.fetch` 只接入 HTTPS 公网 IPv4。每次请求固定已检查的地址，最多 5 跳重定向；跨源不转发自定义请求头。暂不支持 IPv6-only 地址。
+- `ai.complete` 不带工具；每应用每日 100 次，先预留运行预算。Anthropic 首批计费表覆盖 Sonnet 5.5、Opus 5.5；其他 Anthropic 模型在补齐计费表前返回 unavailable。OpenRouter 读取模型目录计价。调用结果保留来源标签。
+- `ai.embed` 默认在设备内使用 Apple NaturalLanguage 句向量，不计费，不上传文本。模型不可用时明确报错。中文和英文模型已在本机检测到。
+- `publish` 以 GitHub Contents API 提交 Markdown；覆盖已有文件须提供 SHA。返回 committed 只表示提交成功，不能当作 Pages 部署成功。确定失败撤销文档状态，不确定结果记录 unknown。
+- UI Kit 内置并锁定 Preact、htm、marked、DOMPurify、CodeMirror、Chart.js、Phaser、three.js、Matter.js、Readability；通过同源 `/_lib/` 引入。原型的富文本选型暂由 Markdown 编辑器交付，富文本能力仍需补齐。
+- API 依据：[Brave Search](https://api-dashboard.search.brave.com/api-reference/web/search/get)、[Claude Messages](https://platform.claude.com/docs/en/api/messages/create)、[Sonnet 5.5 价格](https://platform.claude.com/docs/en/models/sonnet-5-5/overview)、[OpenRouter Chat](https://openrouter.ai/docs/api/api-reference/chat/create-a-chat-completion)、[GitHub Contents](https://docs.github.com/en/rest/repos/contents)。2026-10-16 查阅。真实账户连通与计费验证仍待配置后执行。
+
+## 重建服务范围与边界（2026-10-16）
+
+当前可发现能力由 `system.describe` 返回，未配置账户会明确失败。
+
+| 服务 | 已实现 | 当前边界 |
+|---|---|---|
+| 文件 | 授权文件夹、逐段 openat 拒绝符号链接、列举、读写、mkdir、可恢复移除、撤销 | 读写和移除限普通文件 2 MB；移除的旧内容保留在 AgentOS 历史中；撤销核对原主体、内容 hash 或目录 inode，非空目录不删除 |
+| 邮件 | TLS IMAP 只读 EXAMINE / BODY.PEEK、隔离 MIME 解析、私人摘要索引、mail.received、TLS SMTP | 应用专用密码；每 5 分钟检查最近 100 封，每轮最多新增 5 封；邮件 2 MB；OAuth 与大型附件另行扩展；没有执行真实发信 |
+| 日历/通讯录 | EventKit 读写与精确补偿、Contacts 查询 | 用户在设置授予系统权限；邀请参会人不在 create 中隐式执行 |
+| 媒体 | 授权文件夹扫描、去重索引、元数据、AVPlayer 原生窗口、Range 分段读取、进度持久化 | 每轮至多 1000 项/200 目录；不跟随链接；每段重查授权；AVPlayer 不支持的容器返回平台错误，不宣称 libmpv 已实现 |
+| AI/网页 | 已有 HTTP 出口、Brave、正文解析、模型完成、本地句向量及混合检索 | 缺少用量保守记账；真实模型与搜索账户另验 |
+| 发布 | GitHub 内容提交与草稿状态补偿 | HTTP 5xx/断线记 unknown；不自动重发，不把提交接受等同网站部署成功 |
+
+URL 来源表绑定完整 URL 和运行；用户输入、搜索结果、提取的链接才进入已知来源，添加查询参数不会继承白名单。公网解析若只返回 198.18/15 Fake-IP，使用固定 Cloudflare HTTPS DNS 地址再解析；仍拒绝任何私网答案，不关闭 TLS 验证。该兼容路径已有单测。
+
+后台使用 `SMAppService` 登录项加单一数据库持有者交接，替代同时写库的双进程 XPC 方案。没有窗口时遇到需要确认的操作，留下通知并拒绝执行，用户回到前台后重新发起。

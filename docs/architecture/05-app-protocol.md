@@ -308,3 +308,9 @@ aos call tasks.list '{"range":"today"}'   # 原样传 JSON 参数
 - **生成接口的质量参差不齐**：靠共享 schema、lint、契约测试兜底，并用评测集持续度量「界面能完成的任务里，有多少能只通过接口完成」（[11](11-engineering.md) 第 4 节）。
 - **无界面核心宿主的开销**：空闲回收、并发上限；S1 给出每个实例的内存数字后再定上限。
 - 待定：命名空间冲突时是否允许用户「接管」一个命名空间（例如新笔记应用替代旧的，继承 `notes`）？建议允许，但要过接口兼容检查。
+
+## 重建投影与外部驱动（2026-10-16）
+
+IDL 解析、输入/输出检查、接口兼容检查和应用调用位于 `AgentOSCore` 与 `RuntimeCoordinator`。`aos` 经权限为 0600 的 Unix socket 和轮换会话令牌连接当前宿主；CLI、界面和 Agent 走同一路由。CLI 的 `--dry-run` 校验输入但不执行。保留 `ext` 命名空间用于外部驱动。
+
+MCP 驱动使用 HTTPS Streamable HTTP，完成 initialize、会话头、分页 tools/list 和 tools/call；同时解析 JSON 与有界 SSE 响应。反向 sampling、服务器发起的请求和自动重放不可逆工具都拒绝。外部工具以 `ext.<driver>.<tool>` 纳入 apps.search/describe/call；说明与结果视为不可信，结果带私人标签，效果上限保守设为 irreversible。每次调用复核当前 schema 和连接状态。参照 [MCP 2025-06-18 transport](https://modelcontextprotocol.io/specification/2025-06-18/basic/transports)。本机测试覆盖握手、会话、响应关联和反向请求拒绝；真实 MCP 服务器待连接验收。

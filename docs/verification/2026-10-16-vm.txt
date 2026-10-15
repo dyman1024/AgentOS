@@ -1,0 +1,23 @@
+✓ guest has no hardware network device; kernel virtual interfaces have no host uplink
+✓ Python, Node and shell execute over vsock
+✓ direct outbound socket cannot bypass host policy
+✓ vsock egress rejects domains without a grant
+✓ forged command token is rejected
+✓ authorized HTTPS egress goes through host gateway
+✓ background service starts
+✓ background service survives individual command completion
+✓ backendcheck: contracts run in a disposable VM; live state begins clean
+✓ backendcheck: backend process persists across tool calls without an open UI
+✓ backend output retains conservative private and external-source labels
+✓ backend grant revocation takes effect before dispatch
+✓ ocicheck: contracts run in a disposable VM; live state begins clean
+✓ ocicheck: backend process persists across tool calls without an open UI
+✓ backend output retains conservative private and external-source labels
+✓ backend grant revocation takes effect before dispatch
+✓ signed base image update selects a separate immutable image
+✓ base image update preserves the running persistent guest disk
+✓ base image version replay or downgrade is rejected
+✓ temporary VM boots from clean base without host folders
+✓ temporary VM disk is removed after execution
+✓ disk and machine snapshot restore prior state
+PASS: VM isolation and cold disk checkpoint (memory restoration not tested)

@@ -28,68 +28,33 @@
 | [调研记录](docs/README.md) | 方案对比、实测数据和实验代码 |
 | [AGENTS.md](AGENTS.md) | 给 AI Agent 和协作者的工作约定（全程中文、文档规则、常用命令） |
 
-## 当前阶段：P0 原型
+## 当前版本：从零重建
 
-- **外壳**：SwiftUI 窗口，左侧是运行时，右侧是对话。左侧未打开应用时显示启动台。
-- **运行时**：每个应用一个 `WKWebView`，从 `agentos://<appId>/` 加载 `~/Library/Application Support/AgentOS/apps/<appId>/`。
-  - 网络隔离靠两层：CSP 和 `WKContentRuleList`，拦截所有外网请求。
-  - 每个应用有独立的 `WKWebsiteDataStore`。
-  - 注入 [agentos-shim.js](App/Runtime/agentos-shim.js)，负责捕获 console 和异常、统计动画帧数、提供 `agentos.expose()`、模拟按键与点击。
-- **Agent**：[agent-engine/](agent-engine/) 基于 Claude Agent SDK（TypeScript），用 Bun 编译成单文件作为子进程运行，与 Swift 之间走 stdio 上的 JSON-RPC。
-  - 可用的文件工具只有 `Read / Write / Edit / Glob`，且限定在应用目录内。
-  - 运行时工具 `run_app / smoke_test / send_input / get_console / screenshot / inspect_state / set_app_info` 由 Swift 实际执行。
-  - Agent 写完文件后，左侧自动刷新；随后 Agent 自己运行、冒烟测试、截图检查，有问题就修复。
-- **模型服务商**：在设置（⌘,）里二选一。
-  - **Anthropic**：直连官方 API。
-  - **OpenRouter**：走 OpenRouter 的 Anthropic 兼容接口，引擎按[官方文档](https://openrouter.ai/docs/guides/community/anthropic-agent-sdk)设置 `ANTHROPIC_BASE_URL` 和 `ANTHROPIC_AUTH_TOKEN`。预设了 Claude 系列和几款实验性模型，也可以填写任意 OpenRouter 模型 ID。
-  - 选了不支持图片的模型时，Agent 的截图工具会被关闭；不是 Claude 的模型，不传思考强度参数。
-  - 通过 OpenRouter 时，对话里显示的费用是按 Anthropic 定价估算的，以 OpenRouter 账单为准。
-- **API Key**：用户自己填写，每个服务商一份。保存前会在线校验，无效的 Key 不会保存。Key 存在钥匙串里，生成的应用读不到。
+以正式技术方案和设计稿为基线，默认工程已切换到 `Host/`、`Sources/` 和新的引擎入口。原型 `App/` 保留供历史参考，不参与构建。
 
-## 开发
+已实现内核与共享数据、应用核心与界面、包版本和回滚、应用互联、固定自动化、模型接入、系统服务、VM 与 OCI 后端、原生沙箱、恢复和发行工具。**本地确定性验证已通过，真实模型质量、桌面交互、真实账户和正式发行验收尚未完成。** 具体结果见 [重建方案](docs/architecture/12-rebuild-plan.md) 和 [验收记录](docs/verification/2026-10-16-rebuild.md)。
 
-环境要求：macOS 15+、Xcode 26、[XcodeGen](https://github.com/yonaskolb/XcodeGen)、[Bun](https://bun.sh)。
+## 开发与运行
+
+要求 Apple Silicon、macOS 26、Xcode 26.6、XcodeGen 和 Bun 1.3.14。本机实测环境为 macOS 26.5.1 / Swift 6.3.3。应用运行不依赖 Docker；开发构建 VM 镜像时才使用独立 Linux 构建器。
 
 ```bash
-cd agent-engine && bun install && cd ..
-```
-
-```bash
+cd agent-engine
+bun install --frozen-lockfile
+cd ..
 make run
 ```
 
-`make run` 会生成 Xcode 工程、编译并打开 App。你也可以执行 `make project`，然后用 Xcode 打开 `AgentOS.xcodeproj`。
-
-### 常用命令
-
 | 命令 | 作用 |
 |---|---|
-| `make build` | 编译。构建阶段会把 Agent 引擎和 claude 二进制打进 `AgentOS.app/Contents/Resources/engine/` |
-| `make selftest` | 不调用模型：把 [tests/fixtures/snake.html](tests/fixtures/snake.html) 载入运行时并跑冒烟测试，结果写入 `logs/selftest-result.json` |
-| `make sandbox-test` | 沙箱回归：逐个载入 `tests/fixtures/sandbox-*.html`，越界读取、跨应用读取、外网访问、WebRTC 任何一项没被拦截就失败 |
-| `make engine-check` | 对 Agent 引擎做 TypeScript 类型检查 |
+| `make check` | 54 项 Swift 测试、WebKit 沙箱、原生编译与沙箱、OCI 解析、引擎类型检查、宿主构建 |
+| `make background-test` | 独立测试数据上的前后台单一内核交接 |
+| `make selftest` | 真实无窗口核心、协议、事件、自动化、WASM、解析与 UI Kit 集成 |
+| `make sandbox-test` | 全套 WebKit 隔离探针和运行时集成 |
+| `make build` / `make project` | 构建开发 App / 生成 Xcode 工程 |
 
-### 调试开关
+首次启动是空启动台。在设置中填写自己的模型 Key，再通过 Builder 创建应用。凭据保存在钥匙串。设置中的外部服务只在配置后可用；付费评测默认不运行。
 
-| 开关 | 作用 |
-|---|---|
-| `AGENTOS_ENGINE_CMD="bun run $PWD/agent-engine/src/index.ts"` | 用源码直接运行引擎，改引擎代码后不用重新编译 App |
-| `AGENTOS_AUTOPROMPT="做个贪吃蛇" AGENTOS_AUTOQUIT=1` | 启动后自动发送这条请求，完成后截图并退出 |
-| `--selftest-runtime <file.html>` | 把任意 HTML 当作应用跑一遍冒烟测试 |
-| `-provider openrouter` / `-provider anthropic` | 本次启动临时切换服务商，不写入设置 |
-| `ANTHROPIC_API_KEY` / `OPENROUTER_API_KEY` | 钥匙串里没有 Key 时，改用这里的 Key |
+新数据根为 `~/Library/Application Support/AgentOS-Rebuild/`，与旧原型分开。用 `AGENTOS_DATA_ROOT` 指定测试目录；引擎源码调试入口为 `AGENTOS_ENGINE_CMD="bun run $PWD/agent-engine/src/rebuild.ts"`。原型的自动提示和 `--selftest-runtime` 开关不适用于新宿主。
 
-### 数据位置
-
-所有数据都在 `~/Library/Application Support/AgentOS/` 下：
-
-| 目录 | 内容 |
-|---|---|
-| `apps/` | 生成的应用代码 |
-| `meta/` | 应用清单和对话记录 |
-| `agent/` | Agent 会话 |
-| `logs/` | 每次启动一个 JSONL 事件日志 |
-
-### 签名
-
-默认使用 ad-hoc 签名，每次重新编译后签名都会变，读取钥匙串时 macOS 可能再次弹窗，选「始终允许」即可。想避免这个弹窗，可以新建 `Config/Local.xcconfig`（已加入 .gitignore），改用你自己的开发者证书，写法见 [Config/AgentOS.xcconfig](Config/AgentOS.xcconfig)。
+更多操作见 [使用说明](docs/user-guide.md)、[VM 与镜像](vm/README.md)、[评测说明](evals/README.md)、[工程与发行](docs/architecture/11-engineering.md)。

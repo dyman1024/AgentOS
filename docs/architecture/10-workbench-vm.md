@@ -37,19 +37,20 @@
 
 ## 3. 实现
 
-| 项 | 设计 |
+| 项 | 重建实施决定 |
 |---|---|
-| 技术栈 | **Apple Containerization**（Swift 包，Apache-2.0），直接跑在 AgentOS 进程里，不依赖 Docker、OrbStack 或 Parallels；底层是 Virtualization.framework。要求 Apple 芯片和 macOS 26。**截至 2026-10 仍是 0.x 版本（0.51.0）**，API 可能变动 |
-| 授权 | 只需要 `com.apple.security.virtualization`（不受限，Developer ID 可用）；需要随应用分发 Linux 内核和 `vminitd` |
-| 实例 | 一台**常驻 Workbench VM**（arm64 Linux，内存上限 4–8 GB，持久磁盘存放工具链和缓存），加上按需创建的**临时微虚拟机**（运行不可信代码，用完即弃） |
-| 镜像 | 基础镜像为 arm64 OCI，预装常用工具链；首次启动时下载（几百 MB 到几 GB，需要提示用户），之后增量更新 |
-| 控制通道 | vsock 上的 gRPC（Containerization 的 vminitd）；面向 Agent 和服务的 MCP 也走 vsock |
-| 文件 | virtiofs **只共享授权目录**：Agent 的工作区、应用的后端目录、用户明确授权的文件夹 |
-| 网络 | **不配直通网卡。** VM 的网络接口接到宿主侧的用户态网络栈（vfkit 加 gvproxy 那一类做法，经文件句柄或 vsock 转发），由宿主按域名白名单放行并记入审计。Containerization 默认不配网卡，允许接入自定义的网络附件，所以可行（已核实源码） |
-| 快照 | 用 `saveMachineState` 实现秒级挂起和恢复；磁盘回滚用 APFS 克隆 |
-| 资源 | 设内存上限；空闲时挂起；定期重启以收回内存；临时 VM 有时长和资源上限 |
+| 技术栈 | 系统 Virtualization.framework，Apple Silicon / macOS 26；运行不依赖 Docker |
+| 授权 | 宿主 virtualization entitlement；镜像内核与 rootfs 单独分发 |
+| 实例 | 2 vCPU / 1 GiB；一台持久工作间，按需临时实例；每应用独立后端 VM，最多两个驻留后端 |
+| 镜像 | arm64 kernel + ext4；独立可信 Ed25519 公钥验证清单，按声明字节数和 SHA-256 验证文件 |
+| 控制通道 | 有界 JSON RPC 经 vsock；命令短期令牌绑定宿主运行，命令结束即失效 |
+| 文件 | 不共享宿主目录。通过授权文件服务显式复制 ≤1 MB UTF-8；OCI 归档单独有界传输 |
+| 网络 | 无网卡；`aos net.fetch` 显式请求宿主域名授权与出口策略，不实现透明 TCP/IP 网络栈 |
+| 快照 | 保存磁盘与内存状态；本机内存恢复失败，冷磁盘恢复通过且必须显式指定 |
+| 更新 | 新基础镜像不可变存储，原子更新选择指针；已有磁盘保留，新实例使用新基础镜像 |
+| 资源 | 命令 ≤120 秒、输出 ≤2 MB；后端单次 ≤20 秒、回复 ≤1 MB；闲置暂停，临时磁盘执行后清理 |
 
-**为什么不用 NAT 加代理：** 只要 VM 有一块能直通 NAT 的网卡，代理设置就只是建议，被注入的代码可以绕开。出站控制必须是强制的，所以网卡本身就不能直通外网。
+此前 Containerization、vminitd/gRPC、virtiofs 与用户态网络栈是候选方案。重建选择更小的强制边界：不给 VM 网卡、宿主挂载或私有凭据，联网和文件访问均为显式宿主操作。来宾包管理器不能直接联网；依赖需在构建镜像/OCI 时准备。
 
 ## 4. 对外接口（工具）
 
@@ -61,7 +62,7 @@
 | `vm.snapshot` / `restore` | 给工作间打快照、回滚 | Agent、恢复模式 |
 | `vm.stats` | 内存、CPU、磁盘占用 | 外壳 |
 
-- VM 里的服务以 MCP Server 的形式经 vsock 接入宿主，和其他应用平等地参与协议和总线（[05](05-app-protocol.md)、[06](06-event-bus.md)）。
+- 应用后端使用 NDJSON 标准输入/输出协议，由 Web 核心声明的工具包装，按正常 IDL 参与调用和事件；不隐式注册一个免授权的 MCP Server。
 - VM 里的命令行可以调用 `aos`，经 vsock 转发到宿主，主体是 `vm:<id>`，权限按发起它的运行计算（[00](00-kernel.md) 第 3.4 节）。
 - `vm.exec` 的输出如果来自网络（例如下载的网页），宿主无法区分；所以执行过联网命令的 VM 会话，结果一律标为不可信。
 
@@ -93,3 +94,13 @@ P3 之前先做 S7（[11](11-engineering.md) 第 8 节）：验证不配直通�
 - Linux 的 Rosetta 在 macOS 27 之后是否继续提供尚不确定，所以统一使用 arm64 镜像。
 - 首次下载体积较大，需要在引导流程里说明并显示进度。
 - 被注入的代码可能借 VM 外泄数据，必须靠用户态网络栈的白名单和严格限定共享目录来守住。
+
+## 重建 VM 实施决定与实测（2026-10-16）
+
+采用系统 Virtualization.framework 直接启动 arm64 Linux。默认 2 vCPU / 1 GiB，无网卡、无宿主目录直通；JSON RPC 经 vsock 5201 执行，5202 承接宿主调用。每条命令有短期随机令牌、超时、输出上限和宿主运行上下文；响应结束即失效。网络只通过显式 `aos net.fetch` 进入宿主域名授权与出口策略，不提供透明 TCP/IP 网络栈。
+
+持久工作间、临时干净工作间、文件操作、进程服务、日志、空闲暂停和磁盘快照已实现。`vm.copyIn/copyOut` 通过授权文件夹服务复制不超过 1 MB 的 UTF-8 文件；没有默认共享。后台服务不继承一次命令的宿主令牌。每应用后端已接入 IDL 工具：Node/Python 源码，或 linux/arm64 OCI image-layout tar。OCI 在来宾内用 umoci/runc 验证并解包，保留标准启动参数，`/data` 映射来宾私有持久目录。契约测试另建干净 VM，正式后端不会继承测试状态。
+
+本机实测 Python/Node 执行、直接 socket 被阻断、未授权域名/伪造令牌拒绝、经授权宿主 HTTPS、服务继续运行、临时工作间清理和冷启动磁盘恢复通过。完整内存状态恢复在本机返回 `VZErrorDomain Code 12`，独立最小复现也失败；保留明确的 `cold: true` 磁盘恢复选项，不静默伪装为内存恢复。签名清单、受限 HTTPS 下载、文件完整性验证和基础镜像更新代码已实现；发行镜像来源、托管地址和公钥尚未配置。`vm/build-image.sh` 是开发构建器，实际使用的 LinuxKit 内核仅作本机验证，不等于已确定再分发方案。见 [VM 说明](../../vm/README.md)。
+
+OCI 布局和描述符按 [OCI Image Layout](https://github.com/opencontainers/image-spec/blob/main/image-layout.md) 校验，解包使用 [umoci 官方流程](https://github.com/opencontainers/umoci)。当前 profile 限定单一 `app` 标签、SHA-256 和普通/gzip 层，不接受未在包内提供的外部 blob。
