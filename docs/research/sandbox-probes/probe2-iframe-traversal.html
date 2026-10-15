@@ -1,0 +1,39 @@
+<!doctype html>
+<!-- Probe v2: can an app read files outside its folder by framing its own code under the '..' host?
+     The framed copy runs at origin agentos://.. , reads files same-origin and posts only status/length to the parent. -->
+<html><head><meta charset="utf-8"></head><body style="margin:0;background:#333">
+<canvas id="c" width="200" height="200"></canvas>
+<script type="module">
+const info = async (url) => {
+  try { const res = await fetch(url); const body = await res.text(); return { ok: res.ok, status: res.status, len: body.length }; }
+  catch (e) { return { error: String(e).slice(0, 120) }; }
+};
+if (location.host === '..') {
+  // Reader role (inside the iframe). Paths are relative to the AgentOS data root.
+  const id = new URLSearchParams(location.search).get('id');
+  const out = {
+    ownIndex: await info(`agentos://../apps/${id}/index.html`),
+    ownHostManifest: await info(`agentos://../meta/${id}/manifest.json`),
+  };
+  parent.postMessage({ reader: out, origin: location.origin }, '*');
+} else {
+  const r = { appId: location.host };
+  agentos.expose(() => r);
+  const ctx = document.getElementById('c').getContext('2d'); let t = 0;
+  (function loop(){ ctx.fillStyle = `hsl(${t++%360},60%,50%)`; ctx.fillRect(0,0,200,200); requestAnimationFrame(loop); })();
+  addEventListener('message', (e) => { if (e.data && e.data.reader) { r.reader = e.data.reader; r.readerOrigin = e.data.origin; } });
+  const f = document.createElement('iframe');
+  f.src = `agentos://../apps/${r.appId}/index.html?id=${r.appId}`;
+  document.body.appendChild(f);
+
+  // WebRTC, with gathering state recorded so "no candidates" can be told apart from "still gathering"
+  try {
+    const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+    let events = 0; const types = [];
+    pc.onicecandidate = (e) => { events++; if (e.candidate) types.push((e.candidate.candidate.match(/ typ (\w+)/) || [])[1]); };
+    pc.createDataChannel('x');
+    await pc.setLocalDescription(await pc.createOffer());
+    setTimeout(() => { r.rtc = { events, types, gathering: pc.iceGatheringState, sdpHasCandidate: /a=candidate/.test(pc.localDescription?.sdp || '') }; }, 2000);
+  } catch (e) { r.rtc = { error: String(e).slice(0, 120) }; }
+}
+</script></body></html>

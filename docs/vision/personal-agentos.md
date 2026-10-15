@@ -5,6 +5,8 @@
 > 前置文档：[整体技术调研](../research/architecture-research.md)、[Web 与 Native 运行时对比](../research/native-vs-web.md)
 >
 > 后续文档：[系统技术方案](../research/system-architecture.md) 覆盖了底座、三类应用产物、应用协议与总线，其中的路线图取代本文第 6 节。
+>
+> **以技术方案为准的部分：** 本文第 2 节原则 5（「应用和 Agent 都只拿到声明并获得授权的能力」「敏感操作一律由宿主确认」）已被后来的创始人决策细化：Agent 拥有极大权限，出口按谨慎、自动、完全信任三档模式把关，见 [09 权限与安全](../architecture/09-security.md) 第 4 节。路线图以[技术方案总览](../architecture/README.md)第 8 节为准。
 
 ## 1. 愿景
 
