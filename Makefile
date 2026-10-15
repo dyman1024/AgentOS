@@ -34,7 +34,6 @@ background-test: build
 release-test: ui-kit project
 	xcodebuild -project AgentOS.xcodeproj -scheme AgentOS -configuration Release -derivedDataPath build-release -packageAuthorizationProvider netrc build -quiet
 	python3 scripts/release-smoke.py
-	python3 scripts/background-check.py --configuration Release
 
 guest-test:
 	python3 tests/test_oci.py

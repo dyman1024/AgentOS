@@ -39,6 +39,8 @@ with tempfile.TemporaryDirectory(prefix="agentos-background-check-") as director
     def wait_role(role):
         deadline = time.monotonic() + 40
         while time.monotonic() < deadline:
+            if processes and processes[-1].poll() is not None:
+                raise RuntimeError("Host exited before acquiring role: " + role + "; check signing and library validation")
             try:
                 if (root / "system/host-role").read_text() == role:
                     call("apps.list")

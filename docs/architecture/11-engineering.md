@@ -40,7 +40,7 @@ make run
 | `make engine-check` | TypeScript 类型检查 | 否 |
 | `make build` | UI Kit、XcodeGen、Debug 宿主、引擎与 CLI 打包 | 否 |
 | `make check` | core-test、sandbox-test、native-test、guest-test、engine-check、build | 否 |
-| `make release-test` | hardened ad-hoc Release、引擎/Claude 启动、Release 前后台交接 | 否；不调用模型 |
+| `make release-test` | hardened Release、引擎/Claude 启动；有 Apple Team ID 才运行 Release 宿主交接 | 否；不调用模型 |
 | `make background-test` | 真实独立前后台进程的排他租约交接与持久化 | 否；不注册登录项 |
 | [VMChecks](../../vm/README.md) | 真实 VM、出站、Node/OCI 后端、冷恢复 | 无模型费；需要镜像和授权 HTTPS 网络 |
 
@@ -92,3 +92,5 @@ Debug 使用 ad-hoc；Release 打开 hardened runtime，并对 Bun 引擎、Clau
 遵循 [AGENTS.md](../../AGENTS.md)：中文沟通、`feat/*` 分支、conventional commit 英文标题、中文 PR 描述；修改设计同步分册和总览决策。调研记录不可修改。公开提交不包含 Key、本机用户路径、测试数据和镜像。
 
 完成阶段需要对应的证据。未配置、未实跑、平台失败分别记录，不能计作通过。当前交付及未通过项见 [重建方案](12-rebuild-plan.md) 与 [验收记录](../verification/2026-10-16-rebuild.md)。
+
+Release 本机启动限制：Apple 的 library validation 不接受没有 Team ID 的 ad-hoc 宿主加载 Sparkle。即使双方都严格验签通过也不能满足这一运行条件，见 [Sparkle 官方说明](https://sparkle-project.org/documentation/)。保留 Release 的 library validation；无证书时 CI 只验证构建、签名和独立 sidecar 启动，将 Release 宿主启动明确标为 NOT RUN。开发宿主使用 Debug。

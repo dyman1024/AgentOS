@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import selectors
 import subprocess
+import sys
 import tempfile
 
 repo = Path(__file__).resolve().parent.parent
@@ -29,3 +30,9 @@ with tempfile.TemporaryDirectory(prefix='agentos-release-engine-') as directory:
     result=subprocess.run([str(engine/'claude'),'--version'],env=env,capture_output=True,text=True,timeout=30,check=True)
     assert result.stdout.strip(),'Claude binary did not report its version'
 print('PASS: strict bundle signing, hardened Bun JSON-RPC, clean EOF shutdown and Claude binary startup; no model calls')
+signature=subprocess.run(['codesign','--display','--verbose=4',str(app)],capture_output=True,text=True,check=True).stderr
+team=next((line.split('=',1)[1] for line in signature.splitlines() if line.startswith('TeamIdentifier=')),None)
+if team and team!='not set':
+    subprocess.run([sys.executable,str(repo/'scripts/background-check.py'),'--configuration','Release'],check=True)
+else:
+    print('NOT RUN: hardened host launch with Sparkle requires an Apple signing Team ID; ad-hoc signing cannot satisfy library validation. Use Debug for local host execution. This is an S5 release gate, not a passed startup check.')
