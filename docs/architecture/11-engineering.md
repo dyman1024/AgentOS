@@ -32,7 +32,7 @@ make run
 
 | 命令 | 验证范围 | 是否付费/需要账户 |
 |---|---|---|
-| `make core-test` | 54 项 Swift Testing：事务、撤销、权限、预算、事件、迁移、包、HTTP、文件、邮件、MCP | 否 |
+| `make core-test` | 55 项 Swift Testing：事务、撤销、权限、预算、事件、迁移、包、HTTP、文件、邮件、MCP | 否 |
 | `make selftest` | 真实 WebKit 核心、协议、事件、自动化、WASM、解析、UI Kit | 否 |
 | `make sandbox-test` | 上述集成及所有 `sandbox-*.html` 探针 | 否 |
 | `make native-test` | swiftc、Seatbelt、共享数据调用、进程退出与恢复 | 否；需要 CLT |
@@ -94,3 +94,5 @@ Debug 使用 ad-hoc；Release 打开 hardened runtime，并对 Bun 引擎、Clau
 完成阶段需要对应的证据。未配置、未实跑、平台失败分别记录，不能计作通过。当前交付及未通过项见 [重建方案](12-rebuild-plan.md) 与 [验收记录](../verification/2026-10-16-rebuild.md)。
 
 Release 本机启动限制：Apple 的 library validation 不接受没有 Team ID 的 ad-hoc 宿主加载 Sparkle。即使双方都严格验签通过也不能满足这一运行条件，见 [Sparkle 官方说明](https://sparkle-project.org/documentation/)。保留 Release 的 library validation；无证书时 CI 只验证构建、签名和独立 sidecar 启动，将 Release 宿主启动明确标为 NOT RUN。开发宿主使用 Debug。
+
+托管 CI 缺少 Apple 中文句向量资源时，真实中文语义集成测试显示 skipped；不会伪装通过或改成外部模型。另一个确定性测试验证缺少语言资源时返回 unavailable。本机中文模型存在，已实际运行相关性/版本/本地性测试。CI 的通过结论必须带上这一平台资源限制。

@@ -1,4 +1,5 @@
 import Foundation
+import NaturalLanguage
 import Testing
 
 @testable import AgentOSCore
@@ -226,7 +227,12 @@ func expectCode(_ code: String, _ operation: () async throws -> Void) async {
   #expect(abs(try await kernel.runCost(run) - 0.7) < 0.000001)
   try await kernel.shutdown()
 }
-@Test func privateSemanticSearchStaysLocalAndTracksRevisions() async throws {
+@Test(
+  .enabled(
+    if: NLEmbedding.sentenceEmbedding(for: .simplifiedChinese) != nil,
+    "Requires Apple's installed Chinese sentence model; missing assets are not a passed integration check"
+  ))
+func privateSemanticSearchStaysLocalAndTracksRevisions() async throws {
   let (k, root) = try fixture()
   defer { try? FileManager.default.removeItem(at: root) }
   let item = try await k.put(
@@ -240,6 +246,12 @@ func expectCode(_ code: String, _ operation: () async throws -> Void) async {
   let next = try await k.semanticQuery("notes", text: "植物与种花", context: user)
   #expect(next.array?.first?["_rev"] == 2)
   #expect(try LocalEmbedding.embed("个人隐私资料")["local"] == true)
+}
+
+@Test func unavailableLocalEmbeddingNeverFallsBackToAnExternalModel() async {
+  await expectCode("unavailable") {
+    _ = try LocalEmbedding.embed("私人资料", language: "zz-unavailable")
+  }
 }
 
 @Test func cancelledUsageCanReconcileOnceWithoutReopeningTheRun() async throws {

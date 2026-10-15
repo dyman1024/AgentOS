@@ -36,10 +36,10 @@ with tempfile.TemporaryDirectory(prefix="agentos-background-check-") as director
             raise RuntimeError(result.stderr.strip())
         return json.loads(result.stdout)
 
-    def wait_role(role):
+    def wait_role(role, owner):
         deadline = time.monotonic() + 40
         while time.monotonic() < deadline:
-            if processes and processes[-1].poll() is not None:
+            if owner.poll() is not None:
                 raise RuntimeError("Host exited before acquiring role: " + role + "; check signing and library validation")
             try:
                 if (root / "system/host-role").read_text() == role:
@@ -52,10 +52,10 @@ with tempfile.TemporaryDirectory(prefix="agentos-background-check-") as director
 
     try:
         background = start("--background")
-        wait_role("background")
+        wait_role("background", background)
         call("data.put", {"collection": "notes", "id": "handoff", "record": {"title": "交接验证", "body": "持久数据"}})
         foreground = start()
-        wait_role("foreground")
+        wait_role("foreground", foreground)
         record = call("data.get", {"collection": "notes", "id": "handoff"})
         assert record["body"] == "持久数据", record
         try:
@@ -65,7 +65,7 @@ with tempfile.TemporaryDirectory(prefix="agentos-background-check-") as director
             assert "conflict" in str(error), error
         foreground.terminate()
         foreground.wait(timeout=10)
-        wait_role("background")
+        wait_role("background", background)
         record = call("data.get", {"collection": "notes", "id": "handoff"})
         assert record["body"] == "持久数据", record
         assert background.poll() is None

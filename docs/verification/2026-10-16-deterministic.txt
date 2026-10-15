@@ -1,4 +1,4 @@
-✔ Test run with 54 tests in 0 suites passed after 0.557 seconds.
+✔ Test run with 55 tests in 0 suites passed after 0.530 seconds.
 ✓ MIME and Unicode decode in isolated WebContent without executing email scripts
 ✓ article extraction runs without page scripts or app bridge
 ✓ article sources preserved
@@ -44,3 +44,5 @@ PASS: runtime integration
 ✓ native core restarts on the next call
 PASS: native compiler, protocol and sandbox
 PASS: authenticated handoff, one database owner, foreground refusal, background reacquisition and data persistence
+PASS: strict bundle signing, hardened Bun JSON-RPC, clean EOF shutdown and Claude binary startup; no model calls
+NOT RUN: hardened host launch with Sparkle requires an Apple signing Team ID; ad-hoc signing cannot satisfy library validation. Use Debug for local host execution. This is an S5 release gate, not a passed startup check.

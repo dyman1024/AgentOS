@@ -47,7 +47,7 @@ make run
 
 | 命令 | 作用 |
 |---|---|
-| `make check` | 54 项 Swift 测试、WebKit 沙箱、原生编译与沙箱、OCI 解析、引擎类型检查、宿主构建 |
+| `make check` | 55 项 Swift 测试、WebKit 沙箱、原生编译与沙箱、OCI 解析、引擎类型检查、宿主构建 |
 | `make background-test` | 独立测试数据上的前后台单一内核交接 |
 | `make selftest` | 真实无窗口核心、协议、事件、自动化、WASM、解析与 UI Kit 集成 |
 | `make sandbox-test` | 全套 WebKit 隔离探针和运行时集成 |
