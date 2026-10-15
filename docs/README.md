@@ -4,6 +4,7 @@
 |---|---|---|
 | [architecture/](architecture/README.md) | **技术方案**：总览加 11 份模块分册 | 正式设计，开发以此为准 |
 | [vision/](vision/personal-agentos.md) | Personal AgentOS 的愿景 | 产品方向 |
+| [design/](design/README.md) | **交互设计稿**（单文件 HTML，可交互原型） | 体验与视觉方向 |
 | [research/](research/) | 调研记录、方案对比和实验代码 | 决策依据，按时间留存，不再修改 |
 
 调研记录：
