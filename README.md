@@ -1,8 +1,31 @@
 # AgentOS
 
-macOS 上的「对话即应用」：右侧和 Agent 对话，左侧即时生成并运行对应的应用或游戏，宿主 App 全程不需要重新编译。
+**一台会生长的电脑。** Personal AgentOS 是 macOS 上的生成式个人操作系统。
 
-技术方案见 [docs/architecture/](docs/architecture/README.md)（总览加 11 份模块分册），文档索引见 [docs/README.md](docs/README.md)。
+- **它能做的事**：电脑在应用层能做的它都能做，比如开发和玩游戏、上网查资料、收发邮件、看电影、写文档和博客。
+- **应用从哪来**：没有预装应用。所有应用都是你和 Agent 在使用过程中生成、迭代出来的。
+- **应用之间的关系**：每个应用天生支持同一套协议，可以互相调用、订阅彼此的事件；你的 Agent 拥有照料它们的全部权限。
+
+[![AgentOS 概念介绍页](docs/design/cover.png)](https://dyman1024.github.io/AgentOS/)
+
+**[打开概念介绍页 →](https://dyman1024.github.io/AgentOS/)**
+
+这是一份可以直接操作的交互设计稿，内容包括：
+
+- 四个核心场景的原型：一句话生成应用、应用之间互联、自主行动与授权、撤销与回滚；
+- 系统剖面图；
+- 设计语言。
+
+源文件在 [docs/design/](docs/design/README.md)。
+
+## 文档
+
+| 文档 | 内容 |
+|---|---|
+| [概念介绍页（交互设计稿）](docs/design/README.md) | 产品概念、可交互原型、设计语言 |
+| [技术方案](docs/architecture/README.md) | 总览加 11 份模块分册，开发以此为准 |
+| [产品愿景](docs/vision/personal-agentos.md) | Personal AgentOS 的定位和设计原则 |
+| [调研记录](docs/README.md) | 方案对比、实测数据和实验代码 |
 
 ## 当前阶段：P0 原型
 
