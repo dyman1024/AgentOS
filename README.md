@@ -2,7 +2,7 @@
 
 macOS 上的「对话即应用」：右侧和 Agent 对话，左侧即时生成并运行对应的应用或游戏，宿主 App 全程不需要重新编译。
 
-整体方案与调研见 [docs/research/architecture-research.md](docs/research/architecture-research.md)。
+技术方案见 [docs/architecture/](docs/architecture/README.md)（总览加 11 份模块分册），文档索引见 [docs/README.md](docs/README.md)。
 
 ## 当前阶段：P0 原型
 
