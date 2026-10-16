@@ -77,7 +77,7 @@ S4 的独立任务测试直接调用生成应用的 IDL，核对新增/修改/�
 
 ## 5. 持续集成
 
-`.github/workflows/rebuild.yml` 使用 macOS 26 / Xcode 26.6、固定 SHA 的 checkout/setup-bun、冻结 Bun 依赖；运行 `make check`、前后台交接及所有免费评测预检。没有模型 Key，不进行付费请求。代码提交 057fcab 的远端 CI 已通过，见 [验收记录](../verification/2026-10-16-rebuild.md)；后续提交以 PR 的检查为准。工具链参考 [官方 runner 清单](https://github.com/actions/runner-images/blob/main/images/macos/macos-26-arm64-Readme.md)。
+`.github/workflows/rebuild.yml` 使用 macOS 26 / Xcode 26.6、固定 SHA 的 checkout/setup-bun、冻结 Bun 依赖；运行 `make check`、前后台交接及所有免费评测预检。没有模型 Key，不进行付费请求。桌面修复及平台配置代码提交 b63750e 的远端 CI 已通过，见 [验收记录](../verification/2026-10-16-rebuild.md)；后续提交以 PR 的检查为准。工具链参考 [官方 runner 清单](https://github.com/actions/runner-images/blob/main/images/macos/macos-26-arm64-Readme.md)。
 
 ## 6. 发行
 

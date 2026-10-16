@@ -1,0 +1,19 @@
+Code commit: b63750ea695549122ce6e23992544d467339e8ed
+Run: https://github.com/dyman1024/AgentOS/actions/runs/38841636258
+Result: completed / success
+All workflow steps completed successfully.
+Extracted from job 116782840081; timestamps omitted.
+
+Test privateSemanticSearchStaysLocalAndTracksRevisions() skipped:
+"Requires Apple's installed Chinese sentence model; missing assets are not a passed integration check"
+Test run with 55 tests in 0 suites passed after 3.339 seconds.
+The 55-test report includes the one explicitly skipped Chinese platform integration.
+
+PASS: runtime integration
+PASS: native compiler, protocol and sandbox
+PASS: authenticated handoff, one database owner, foreground refusal, background reacquisition and data persistence
+PASS: strict bundle signing, hardened Bun JSON-RPC, clean EOF shutdown and Claude binary startup; no model calls
+NOT RUN: hardened host launch with Sparkle requires an Apple signing Team ID; ad-hoc signing cannot satisfy library validation. Use Debug for local host execution. This is an S5 release gate, not a passed startup check.
+
+No paid model, real account, real VM or desktop input runs in CI.
+Desktop input and VM verification have separate local evidence.
