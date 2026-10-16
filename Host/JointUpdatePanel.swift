@@ -3,6 +3,7 @@ import SwiftUI
 
 struct JointUpdatePanel: View {
   let model: AppModel
+  @Environment(\.dismiss) private var dismiss
   @State private var selected: Set<String> = []
   @State private var working = false
   @State private var notice = ""
@@ -25,12 +26,13 @@ struct JointUpdatePanel: View {
           do {
             _ = try await model.runtime.commitGroup(
               selected.sorted(), context: RequestContext(.user))
-            notice = "全部应用已更新；数据迁移前备份已保存"
+            notice = "全部应用已更新"
             await model.refresh()
           } catch { notice = error.localizedDescription }
         }
       }.disabled(selected.isEmpty || working)
       Text(notice).font(.caption).textSelection(.enabled)
+      Button("完成") { dismiss() }.disabled(working)
     }.formStyle(.grouped).frame(minWidth: 650, minHeight: 520)
   }
 }
