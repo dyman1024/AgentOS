@@ -11,7 +11,7 @@ extension AppModel {
     Task {
       do {
         let key: Curve25519.Signing.PrivateKey
-        if let encoded = settings.credential("package-signing"),
+        if let encoded = try settings.credential("package-signing"),
           let data = Data(base64Encoded: encoded)
         {
           key = try .init(rawRepresentation: data)

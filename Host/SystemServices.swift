@@ -99,7 +99,7 @@ import Foundation
         (article["links"]?.array ?? []).compactMap { $0["url"]?.string }, context: context)
       return article
     case "publish":
-      guard let key = settings.credential("github") else {
+      guard let key = try settings.credential("github") else {
         throw HostError("unavailable", "请在设置中保存 GitHub 发布令牌")
       }
       return try await Publisher(kernel: kernel).publish(
@@ -228,7 +228,7 @@ import Foundation
     return try Value.parse(String(decoding: response.body, as: UTF8.self))
   }
   func search(_ args: Value, context: RequestContext) async throws -> Value {
-    guard let key = settings.credential("brave") else {
+    guard let key = try settings.credential("brave") else {
       throw HostError("unavailable", "请在设置中保存 Brave Search API Key")
     }
     let query = try args.requiredString("query")
@@ -262,19 +262,19 @@ import Foundation
   }
   func complete(_ args: Value, context: RequestContext) async throws -> Value {
     try await kernel.consumeQuota("ai.complete", limit: 100, context: context)
+    let connection = try await settings.connection()
     let labels = try await kernel.labels(for: context)
-    guard !settings.restrictedModel || !labels.isPrivate else {
+    guard !connection.restrictedModel || !labels.isPrivate else {
       throw HostError("denied", "私人数据不能发送给实验性模型")
     }
-    guard let key = settings.key() else { throw HostError("unavailable", "请先配置模型 API Key") }
     let prompt = try args.requiredString("prompt")
     let input = args["input"]?.string ?? ""
     guard prompt.utf8.count + input.utf8.count <= 100000 else {
       throw HostError("too_large", "AI input exceeds 100 KB")
     }
     let tokens = min(max(args["maxTokens"]?.int ?? 1000, 1), 8000)
-    let provider = settings.provider
-    let model = settings.model
+    let provider = connection.provider
+    let model = connection.model
     let rates: (Double, Double)
     if provider == "anthropic" {
       let known: [String: (Double, Double)] = [
@@ -303,7 +303,7 @@ import Foundation
       if provider == "anthropic" {
         result = try await api(
           "https://api.anthropic.com/v1/messages", method: "POST",
-          headers: ["x-api-key": key, "anthropic-version": "2023-06-01"],
+          headers: connection.authorizationHeaders,
           body: [
             "model": .string(model), "max_tokens": .number(Double(tokens)),
             "messages": [["role": "user", "content": .string(content)]],
@@ -319,7 +319,7 @@ import Foundation
       } else {
         result = try await api(
           "https://openrouter.ai/api/v1/chat/completions", method: "POST",
-          headers: ["Authorization": "Bearer " + key],
+          headers: connection.authorizationHeaders,
           body: [
             "model": .string(model), "max_tokens": .number(Double(tokens)),
             "messages": [["role": "user", "content": .string(content)]],

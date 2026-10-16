@@ -11,6 +11,11 @@ struct SettingsPanel: View {
   @State private var showRestore = false
   @State private var key = ""
   @State private var notice = ""
+  @State private var credentialStatus = ""
+  @State private var connectionNotice = ""
+  @State private var validatingConnection = false
+  @State private var savingKey = false
+  @State private var validationTask: Task<Void, Never>?
   @State private var serviceName = "brave"
   @State private var serviceKey = ""
   @State private var mailUsername = ""
@@ -37,22 +42,53 @@ struct SettingsPanel: View {
           Picker("服务商", selection: $settings.provider) {
             Text("Anthropic").tag("anthropic")
             Text("OpenRouter").tag("openrouter")
-          }.onChange(of: model.settings.provider) { _, provider in
-            model.settings.model =
-              provider == "anthropic" ? "claude-opus-5-5" : "anthropic/claude-opus-5.5"
-          }
-          TextField("模型 ID", text: $settings.model)
-          SecureField("API Key", text: $key)
-          HStack {
-            Button("保存到钥匙串") {
-              do {
-                try model.settings.saveKey(key)
-                key = ""
-                notice = "已保存"
-              } catch { notice = error.localizedDescription }
+          }.disabled(model.busy || validatingConnection || savingKey)
+            .onChange(of: settings.provider) { _, provider in
+              settings.model =
+                provider == "anthropic" ? "claude-opus-5-5" : "anthropic/claude-opus-5.5"
+              key = ""
+              connectionNotice = ""
+              refreshCredentialStatus()
             }
-            Text(notice).font(.caption).foregroundStyle(Palette.muted)
+          TextField("模型 ID", text: $settings.model)
+            .disabled(model.busy || validatingConnection || savingKey)
+            .onChange(of: settings.model) { _, _ in connectionNotice = "" }
+          SecureField("API Key（已保存的 Key 不会回显）", text: $key)
+            .disabled(model.busy || validatingConnection || savingKey)
+            .onChange(of: key) { _, _ in connectionNotice = "" }
+          Text(credentialStatus).font(.caption).textSelection(.enabled)
+          HStack {
+            Button(savingKey ? "正在保存…" : "保存到钥匙串") {
+              connectionNotice = ""
+              savingKey = true
+              let value = key
+              Task {
+                defer { savingKey = false }
+                do {
+                  try await settings.saveKey(value)
+                  key = ""
+                  credentialStatus = "已保存到钥匙串并通过读取校验；尚未验证连接。"
+                } catch { credentialStatus = error.localizedDescription }
+              }
+            }.disabled(
+              key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || model.busy
+                || validatingConnection || savingKey)
+            Button(validatingConnection ? "正在验证…" : "验证已保存配置") { validateConnection() }
+              .disabled(
+                validatingConnection || savingKey || model.busy
+                  || !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            if validatingConnection {
+              ProgressView().controlSize(.small)
+              Button("取消验证") { validationTask?.cancel() }
+            }
           }
+          if !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            Text("新 Key 尚未保存，请先保存再验证。").font(.caption).foregroundStyle(Palette.muted)
+          }
+          if !connectionNotice.isEmpty {
+            Text(connectionNotice).font(.caption).textSelection(.enabled)
+          }
+          Text("验证只查询凭据与模型信息，不执行模型生成，也不发送对话内容。").font(.caption).foregroundStyle(Palette.muted)
           Picker("思考强度", selection: $settings.effort) {
             Text("低").tag("low")
             Text("中").tag("medium")
@@ -63,6 +99,8 @@ struct SettingsPanel: View {
             in: 0.1...50, step: 0.5)
           Text("私人数据不会交付给实验性模型。模型费用由你自己的账户结算。").font(.caption).foregroundStyle(Palette.muted)
         }.formStyle(.grouped).tabItem { Text("模型") }
+          .onAppear { refreshCredentialStatus() }
+          .onDisappear { validationTask?.cancel() }
         Form {
           Picker("服务", selection: $serviceName) {
             Text("Brave Search").tag("brave")
@@ -319,5 +357,33 @@ struct SettingsPanel: View {
       }
     }.padding(24).frame(width: 720, height: 540).preferredColorScheme(.dark)
       .sheet(isPresented: $showRestore) { DataRecoveryPanel(model: model) }
+  }
+  private func refreshCredentialStatus() {
+    let provider = settings.provider
+    credentialStatus = "正在检查保存状态…"
+    Task {
+      let status = await settings.credentialStatus()
+      if provider == settings.provider { credentialStatus = status }
+    }
+  }
+  private func validateConnection() {
+    connectionNotice = "正在读取已保存的凭据…"
+    validatingConnection = true
+    validationTask = Task {
+      defer {
+        validatingConnection = false
+        validationTask = nil
+      }
+      do {
+        let connection = try await settings.connection()
+        credentialStatus = "已读取当前配置的 API Key。"
+        connectionNotice = "正在验证服务商与模型…"
+        connectionNotice = try await connection.validate()
+      } catch is CancellationError {
+        connectionNotice = "验证已取消。"
+      } catch {
+        connectionNotice = error.localizedDescription
+      }
+    }
   }
 }

@@ -124,6 +124,7 @@ struct Approval: Identifiable {
       guard let self else { throw HostError("unavailable", "Host stopped") }
       if method == "validation.state" { return try self.localValidationState() }
       if method == "validation.local" { return try await self.localHostChecks() }
+      if method == "validation.credentials" { return try await self.credentialChecks(args) }
       if method == "evaluation.run" { return try await self.evaluate(args) }
       if method == "evaluation.research" { return try await self.evaluateResearch(args) }
       if method == "system.releaseBackground" {
@@ -300,6 +301,9 @@ struct Approval: Identifiable {
         status = "就绪"
       } catch {
         self.error = error.localizedDescription
+        if let index = messages.lastIndex(where: { $0.role == "assistant" && $0.text.isEmpty }) {
+          messages.remove(at: index)
+        }
         messages.append(ChatLine(role: "error", text: error.localizedDescription))
         status = "等待处理"
       }

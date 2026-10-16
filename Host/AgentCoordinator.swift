@@ -31,17 +31,19 @@ import Foundation
     _ text: String, role: String = "operator", app: String? = nil, parent: RequestContext? = nil,
     initialLabels: Labels = Labels(), budget: Double? = nil, onStart: ((String) -> Void)? = nil
   ) async throws -> Value {
-    let fingerprint = settings.provider + "|" + settings.model
+    let connection = try await settings.connection()
+    let fingerprint = connection.fingerprint
     if !engine.running || configuration != fingerprint {
-      guard runs.isEmpty else { throw HostError("conflict", "请等当前运行结束后切换模型") }
+      guard runs.isEmpty else { throw HostError("conflict", "模型或凭据已更改，请等当前运行结束后重试") }
       let working = root.appendingPathComponent("system/agent")
       try FileManager.default.createDirectory(at: working, withIntermediateDirectories: true)
-      try engine.start(root: working, environment: settings.environment())
+      try engine.start(root: working, environment: connection.environment)
       configuration = fingerprint
     }
     let origin: Principal
     if let parent { origin = try await kernel.initiator(of: parent) } else { origin = .user }
-    let session = "\(origin.id):\(settings.provider):\(settings.model):\(role):\(app ?? "global")"
+    let session =
+      "\(origin.id):\(connection.provider):\(connection.model):\(role):\(app ?? "global")"
     let limit =
       try await parent.mapAsync { try await kernel.remainingBudget($0) } ?? settings.budget
     let allocated = min(budget ?? settings.budget, limit)
@@ -59,7 +61,7 @@ import Foundation
       throw error
     }
     let context = RequestContext(.run(id), runID: id, depth: (parent?.depth ?? -1) + 1)
-    if settings.restrictedModel { restricted.insert(id) }
+    if connection.restrictedModel { restricted.insert(id) }
     runs[id] = context
     let watchdog = Task { @MainActor [weak self] in
       do { try await Task.sleep(for: .seconds(1800)) } catch { return }
@@ -78,21 +80,21 @@ import Foundation
       try await kernel.propagate(initialLabels, to: context)
       if parent == nil { try await kernel.rememberUserLinks(text, context: context) }
       if let parent { try await kernel.propagate(kernel.labels(for: parent), to: context) }
-      if settings.restrictedModel, try await kernel.labels(for: context).isPrivate {
+      if connection.restrictedModel, try await kernel.labels(for: context).isPrivate {
         throw HostError("denied", "实验性模型不能接收此会话中的私人数据；请使用新会话或受支持模型")
       }
       let modelBudget = allocated * (role == "builder" ? 0.85 : 0.25)
       let modelReservation = try await kernel.reserveBudget(modelBudget, context: context)
       var args: Value = [
         "runId": .string(id), "role": .string(role), "text": .string(text),
-        "model": .string(settings.model),
+        "model": .string(connection.model),
         "cwd": .string(root.appendingPathComponent("system/agent").path),
         "maxBudgetUsd": .number(modelBudget),
       ]
       var object = args.object!
       object["appId"] = app.map(Value.string)
       object["sessionId"] = sessions[session].map(Value.string)
-      if !settings.restrictedModel { object["effort"] = .string(settings.effort) }
+      if !connection.restrictedModel { object["effort"] = .string(settings.effort) }
       args = .object(object)
       let result = try await engine.request("session/prompt", args)
       if let sessionId = result["sessionId"]?.string {

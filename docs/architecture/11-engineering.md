@@ -54,7 +54,7 @@ make run
 | `AGENTOS_ENGINE_CMD="bun run $PWD/agent-engine/src/rebuild.ts"` | 引擎源码调试入口 |
 | `AGENTOS_SAFE_MODE=1` | 进入恢复模式，停用生成桌面与自动化 |
 | `AGENTOS_EVAL=1` | 仅在显式隔离的 `agentos-eval-*` 数据根允许评测 RPC |
-| `ANTHROPIC_API_KEY` / `OPENROUTER_API_KEY` | 钥匙串中无凭据时的开发环境回退 |
+| `ANTHROPIC_API_KEY` / `OPENROUTER_API_KEY` | 仅钥匙串无条目时的开发环境回退；读取被拒绝不会回退 |
 | `BRAVE_SEARCH_API_KEY` / `AGENTOS_GITHUB_TOKEN` | 系统服务凭据回退；生成应用不可读取 |
 
 诊断先看宿主活动详情和通知，再看 `system/kernel.sqlite` 中运行、副作用、事件与审计；Agent SDK 配置和会话位于 `system/agent/`，映射位于 `system/agent-sessions.json`。会话和调试日志可能含私人内容，不应直接贴到公共 issue。
@@ -101,3 +101,5 @@ Release 本机启动限制：Apple 的 library validation 不接受没有 Team I
 本地无账户验收入口：`python3 scripts/local-host-check.py` 启动显式隔离的数据根，生成静音 WAV，验证真实 AVFoundation 解码、播放/暂停/跳转、进度保存、撤权，以及两次非正常退出后的恢复模式；随后关闭进程并清理临时数据。`validation.local/state` 仅在 `AGENTOS_LOCAL_CHECKS=1` 且根目录名以 `agentos-local-check-` 开头的宿主可调用，正常宿主拒绝。CI 在 Debug 构建后执行该脚本。
 
 桌面演化夹具用 `python3 scripts/prepare-evolution-fixtures.py` 准备两个待联合升级的应用和一个可生成桌面；由真实界面确认迁移和恢复，不使用模型。脚本不会批准迁移或配置真实账户。
+
+凭据回归：`make credential-test` 使用独立数据根和一次性钥匙串命名空间，验证保存、替换、服务商隔离与宿主重启；已纳入 `make check`，不会调用模型或读取真实账户 Key。

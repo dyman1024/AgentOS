@@ -91,8 +91,9 @@ struct MCPDriver: Codable, Identifiable {
     }
     _ = try await kernel.claimSink(ticket.id, context: context)
     do {
-      let client = client(endpoint: driver.endpoint, token: settings.credential("mcp:" + driver.id))
-      { [weak self, kernel] in
+      let client = client(
+        endpoint: driver.endpoint, token: try settings.credential("mcp:" + driver.id)
+      ) { [weak self, kernel] in
         guard let self else { throw HostError("unavailable", "Host stopped") }
         try await self.ensureConnected(driver.id)
         try await kernel.authorize(context, capability: "call", scope: name)

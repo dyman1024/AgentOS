@@ -44,7 +44,7 @@ import Observation
     return account
   }
   private func password(_ account: MailAccount) throws -> String {
-    guard let key = settings.credential("mail:" + account.id) else {
+    guard let key = try settings.credential("mail:" + account.id) else {
       throw HostError("unavailable", "邮箱凭据不可用")
     }
     return key

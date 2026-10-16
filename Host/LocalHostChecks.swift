@@ -85,4 +85,44 @@ extension AppModel {
     }
     return ["pass": true, "checks": .array(passed), "modelCalls": 0, "externalAccounts": false]
   }
+  func credentialChecks(_ args: Value) async throws -> Value {
+    try requireLocalValidationHost()
+    let service = "dev.agentos.tests." + root.lastPathComponent
+    let defaults = UserDefaults(suiteName: service)!
+    let store = CredentialStore(service: service)
+    let settings = ModelSettings(defaults: defaults, credentials: store, environment: [:])
+    if args["phase"] == "cleanup" {
+      try store.remove("openrouter")
+      try store.remove("anthropic")
+      defaults.removePersistentDomain(forName: service)
+      return ["pass": true]
+    }
+    func check(_ condition: Bool, _ name: String) throws {
+      guard condition else { throw HostError("test_failed", name) }
+    }
+    if args["phase"] == "write" {
+      settings.provider = "openrouter"
+      settings.model = "anthropic/test"
+      try await settings.saveKey("  fixture-before\n")
+      let before = try await settings.connection().fingerprint
+      try await settings.saveKey("fixture-after")
+      try check(
+        try await settings.connection().fingerprint != before,
+        "Key replacement must change sidecar configuration")
+      try check(
+        try settings.credential("anthropic") == nil, "Provider credentials must be isolated")
+    }
+    try check(settings.provider == "openrouter", "Selected provider must persist")
+    try check(try await settings.key() == "fixture-after", "Saved Key must survive a fresh host")
+    try check(
+      try await settings.connection().environment["ANTHROPIC_AUTH_TOKEN"] == "fixture-after",
+      "The sidecar receives the current saved Key")
+    try check(
+      await settings.credentialStatus().contains("已保存"),
+      "Settings must distinguish readable credentials")
+    return [
+      "pass": true, "phase": args["phase"] ?? .null, "modelCalls": 0, "externalAccounts": false,
+    ]
+  }
+
 }

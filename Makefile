@@ -1,7 +1,7 @@
 # Common development commands. The Xcode project is generated from project.yml by XcodeGen.
 APP := build/Build/Products/Debug/AgentOS.app
 
-.PHONY: project build run selftest sandbox-test core-test native-test guest-test background-test release-test check engine-check ui-kit clean
+.PHONY: project build run selftest sandbox-test core-test native-test guest-test background-test credential-test release-test check engine-check ui-kit clean
 
 project:
 	xcodegen generate --quiet
@@ -39,7 +39,10 @@ guest-test:
 	python3 tests/test_oci.py
 	python3 -m py_compile vm/guest.py vm/oci.py
 
-check: core-test sandbox-test native-test guest-test engine-check build
+credential-test: build
+	python3 scripts/credential-check.py
+
+check: core-test sandbox-test native-test guest-test engine-check credential-test
 
 engine-check:
 	cd agent-engine && bunx tsc -p . && bun test
