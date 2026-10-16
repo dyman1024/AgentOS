@@ -168,3 +168,74 @@ Guest status: {"networkInterfaces":["teql0","gre0","ip6gre0","lo","bond0","ip6_v
 PASS: locked restore rejected and latest disk preserved
 
 Deterministic checks: make check exited 0; all 64 local Swift cases executed; WebKit/runtime, native sandbox, 4 OCI cases, TypeScript, Bun RPC and Debug build passed.
+
+Unlock retry of the same two signed binaries (local time UTC+8; no rebuild or re-sign)
+Unlock retry 2026-10-16T12:04:51.236617
+
+CASE probe-adhoc
+stage=start
+stage=pause
+stage=save
+stage=saved bytes=23072768
+stage=restore state=0
+stage=resume
+PASS: minimal snapshot; vsock=false
+EXIT 0
+
+CASE probe-development
+stage=start
+stage=pause
+stage=save
+stage=saved bytes=23072768
+stage=restore state=0
+stage=resume
+PASS: minimal snapshot; vsock=false
+EXIT 0
+
+Final unlocked full-memory integration: 2026-10-16 12:04–12:05 +0800
+Code: 0c25e813f3d54aaace476df1278869c28ded5091
+Rebuilt VMChecks, ad-hoc signed with Config/Virtualization.entitlements.
+VM_OCI_ARCHIVE set to the local fixture; VM_COLD_RESTORE and VM_EXPECT_LOCKED_RESTORE_FAILURE unset.
+VM ready
+Guest status: {"networkInterfaces":["teql0","gre0","ip6gre0","lo","bond0","ip6_vti0","gretap0","tunl0","erspan0","dummy0","sit0","ip6tnl0","ip_vti0","bonding_masters"],"ready":true}
+✓ guest has no hardware network device; kernel virtual interfaces have no host uplink
+✓ Python, Node and shell execute over vsock
+✓ direct outbound socket cannot bypass host policy
+✓ vsock egress rejects domains without a grant
+✓ forged command token is rejected
+✓ authorized HTTPS egress goes through host gateway
+✓ background service starts
+✓ background service survives individual command completion
+✓ backendcheck: contracts run in a disposable VM; live state begins clean
+✓ backendcheck: backend process persists across tool calls without an open UI
+✓ backend output retains conservative private and external-source labels
+✓ backend grant revocation takes effect before dispatch
+✓ ocicheck: contracts run in a disposable VM; live state begins clean
+✓ ocicheck: backend process persists across tool calls without an open UI
+✓ backend output retains conservative private and external-source labels
+✓ backend grant revocation takes effect before dispatch
+✓ signed base image update selects a separate immutable image
+✓ base image update preserves the running persistent guest disk
+✓ base image version replay or downgrade is rejected
+✓ temporary VM boots from clean base without host folders
+✓ temporary VM disk is removed after execution
+✓ snapshot owns the VM across suspension points
+✓ snapshot releases its lifecycle guard
+✓ live heap changes after snapshot
+✓ restore also accepts an idle-paused workbench
+✓ snapshot restores disk contents
+✓ heap counter, random nonce, PID and boot ID resume without a cold boot
+✓ restored process continues from its saved heap value
+✓ restored processes are not automatically suspended by host idle handling
+✓ restoration still rejects forged host tokens
+✓ failed restore reports disk rollback
+✓ failed memory restore never silently cold boots
+✓ failed memory restore preserves the latest disk
+✓ snapshot restored in a fresh process
+✓ heap counter, random nonce, PID and boot ID resume without a cold boot
+✓ restored process continues from its saved heap value
+✓ restored processes are not automatically suspended by host idle handling
+PASS: fresh host restores disk and process memory
+✓ new host process restores heap and disk from the same checkpoint
+PASS: VM isolation and memory snapshot integration
+EXIT 0
