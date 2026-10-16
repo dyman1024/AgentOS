@@ -17,7 +17,7 @@
 | `evals/` | 真实模型 S4/S6 评测；S3 入口在 agent-engine |
 | `App/`、旧引擎 index.ts | 原型背景，不参与默认构建 |
 
-要求 Apple Silicon、macOS 26、Xcode 26.6、Swift 6、Bun 1.3.14、XcodeGen。本机实测 macOS 26.5.1 / Swift 6.3.3。
+要求 Apple Silicon、macOS 26、Xcode 26.6、Swift 6、Bun 1.3.14、XcodeGen。本机实测 macOS 26.5.1 / Swift 6.3.3。`project.yml` 将部署目标固定为 macOS 26.0、架构固定为 arm64，与用户确认的平台要求一致。
 
 依赖锁定：Bun lockfile、Sparkle 2.10.0 精确版本。SQLite、WebKit、Virtualization、NaturalLanguage、EventKit 与 Contacts 使用系统框架。UI 库由 `make ui-kit` 生成并复制到 Bundle，不提交生成文件。
 
