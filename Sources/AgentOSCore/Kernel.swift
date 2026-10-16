@@ -46,6 +46,7 @@ public actor Kernel {
       "CREATE TABLE IF NOT EXISTS schemas (collection TEXT PRIMARY KEY, type TEXT NOT NULL, definition TEXT NOT NULL, private INTEGER NOT NULL DEFAULT 0)",
       "CREATE TABLE IF NOT EXISTS schema_versions (collection TEXT NOT NULL,version INTEGER NOT NULL,definition TEXT NOT NULL,PRIMARY KEY(collection,version))",
       "CREATE TABLE IF NOT EXISTS records (collection TEXT NOT NULL, id TEXT NOT NULL, rev INTEGER NOT NULL, fields TEXT NOT NULL, labels TEXT NOT NULL, deleted INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(collection,id))",
+      "CREATE TABLE IF NOT EXISTS recovery_sources (effect_id TEXT NOT NULL,source_id TEXT NOT NULL,before_state TEXT NOT NULL,after_state TEXT NOT NULL,PRIMARY KEY(effect_id,source_id))",
       "CREATE TABLE IF NOT EXISTS history (seq INTEGER PRIMARY KEY AUTOINCREMENT, collection TEXT NOT NULL, id TEXT NOT NULL, rev INTEGER NOT NULL, before TEXT, after TEXT NOT NULL, effect_id TEXT NOT NULL, changed TEXT NOT NULL)",
       "CREATE TABLE IF NOT EXISTS effects (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT UNIQUE NOT NULL, run_id TEXT, principal TEXT NOT NULL, class TEXT NOT NULL, action TEXT NOT NULL, target TEXT NOT NULL, state TEXT NOT NULL, at TEXT NOT NULL, undo_of TEXT)",
       "CREATE TABLE IF NOT EXISTS audit (seq INTEGER PRIMARY KEY AUTOINCREMENT, payload TEXT NOT NULL, prev_hash TEXT NOT NULL, hash TEXT NOT NULL)",

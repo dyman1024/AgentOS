@@ -23,6 +23,8 @@ jobs:
           cd agent-engine && bun install --frozen-lockfile
       - name: Core, WebKit sandbox, native sandbox, engine and app build
         run: make check
+      - name: Local media decoding playback and revocation without accounts
+        run: python3 scripts/local-host-check.py
       - name: Foreground and background ownership transfer
         run: python3 scripts/background-check.py
       - name: Hardened ad-hoc release and sidecar startup without model calls

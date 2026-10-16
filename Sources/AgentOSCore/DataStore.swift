@@ -111,7 +111,7 @@ extension Kernel {
   }
   func apply(
     _ mutation: Mutation, context: RequestContext, undoOf: String? = nil,
-    restoredLabels: Labels? = nil
+    restoredLabels: Labels? = nil, restoreDeletedFields: Bool = false
   ) throws -> MutationResult {
     let collection = mutation.collection
     let id = mutation.id ?? UUID().uuidString.lowercased()
@@ -135,8 +135,9 @@ extension Kernel {
     } else if mutation.expectedRevision != nil || mutation.delete {
       throw HostError("not_found", "Record not found")
     }
-    let fields = mutation.delete ? (before?.fields ?? [:]) : mutation.fields
-    if !mutation.delete {
+    let fields =
+      mutation.delete && !restoreDeletedFields ? (before?.fields ?? [:]) : mutation.fields
+    if !mutation.delete || restoreDeletedFields {
       try Schema.validate(.object(fields), against: Value.parse(schema["definition"]!.string!))
     }
     let labels = try self.labels(for: context).union(before?.labels ?? Labels()).union(
@@ -257,6 +258,24 @@ extension Kernel {
           collection, id: id, fields: fields, expectedRevision: current.rev,
           delete: before == nil || before!.deleted), context: context, undoOf: effectID,
         restoredLabels: before?.labels)
+      for link in try db.query(
+        "SELECT * FROM recovery_sources WHERE effect_id=?", [.string(effectID)])
+      {
+        guard
+          try db.query("SELECT state FROM effects WHERE id=?", [link["source_id"]!]).first?["state"]
+            == link["after_state"]
+        else {
+          throw HostError("conflict", "Grouped recovery source state changed")
+        }
+        try db.execute(
+          "UPDATE effects SET state=? WHERE id=?", [link["before_state"]!, link["source_id"]!])
+        try db.execute(
+          "INSERT INTO recovery_sources VALUES (?,?,?,?)",
+          [
+            .string(result.effectID), link["source_id"]!, link["after_state"]!,
+            link["before_state"]!,
+          ])
+      }
       try db.execute("UPDATE effects SET state='undone' WHERE id=?", [.string(effectID)])
       if let previous = effect["undo_of"]?.string {
         try db.execute("UPDATE effects SET state='applied' WHERE id=?", [.string(previous)])

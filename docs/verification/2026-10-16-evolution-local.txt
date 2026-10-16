@@ -1,0 +1,84 @@
+2026-10-16 local verification (macOS 26.5.1 / Apple Silicon / Xcode 26.6)
+make check: exit 0
+
+✔ Test run with 64 tests in 0 suites passed after 0.931 seconds.
+✓ MIME and Unicode decode in isolated WebContent without executing email scripts
+✓ article extraction runs without page scripts or app bridge
+✓ article sources preserved
+✓ asynchronous exposed state is awaited before health success
+✓ unresolved asynchronous state fails bounded health check
+✓ joint update rejects a failing participant contract
+✓ failed joint contracts preserve live data
+✓ joint contract writes remain isolated from live records
+✓ all participant contracts use target schema and staged cross-app tools
+✓ cross-app calls retain run attribution for grouped recovery
+✓ CLI cannot approve grouped recovery
+✓ declining group recovery leaves data unchanged
+✓ declined recovery does not write
+✓ approved runtime recovery restores only the chosen run
+✓ WASM asset passes isolated contracts and executes in the hidden core
+✓ external mail event runs a fixed tool plan without UI and preserves privacy/source labels
+✓ mail re-sync does not duplicate automation effects
+✓ Contract tests did not mutate user data
+✓ Hidden core writes through host and returns revision
+✓ Closed application receives event and creates one task
+✓ Acknowledged event does not create a duplicate task
+✓ UI self.call uses the same tool as Agent
+✓ UI direct write is rejected by host
+✓ Hot reload preserves taint
+✓ Revocation is enforced in a running core
+✓ Audit chain verifies after runtime calls
+✓ sandbox-escape.html fetch
+✓ sandbox-escape.html cdnImport
+✓ sandbox-escape.html ws
+✓ probe1 finished
+✓ own files remain readable
+✓ neighborFetch rejected
+✓ traversalFetch rejected
+✓ neighborScript rejected
+✓ unregisteredScript rejected
+✓ traversalScriptExisting rejected
+✓ neighborSecretLeaked false
+✓ rtcAvailable false
+✓ iframeRtcAvailable false
+✓ blankIframeRtcAvailable false
+✓ hooksVisible false
+✓ hooksWritable false
+✓ same-origin iframe exercised
+✓ iframe traversal and RTC blocked
+✓ top-level probe completed without reads
+✓ navigation traversal blocked
+✓ navigation neighbor blocked
+✓ navigation dataUrl blocked
+PASS: runtime integration
+✓ native source compiles under host sandbox and passes isolated contracts
+✓ native process cannot read host data or directly connect to network
+✓ native tool calls shared data through bound host context
+✓ unexpected native process exit leaves host and data intact
+✓ native core restarts on the next call
+PASS: native compiler, protocol and sandbox
+Ran 4 tests in 0.008s
+
+scripts/local-host-check.py: exit 0
+{
+  "checks": [
+    "media scan indexes a local WAV",
+    "AVFoundation decodes duration through authorized byte ranges",
+    "real AVPlayer playback advances",
+    "pause and seek update playback position",
+    "playback progress is persisted",
+    "revoked media folder rejects subsequent reads",
+    "two actual unclean host exits enter recovery mode on restart"
+  ],
+  "externalAccounts": false,
+  "modelCalls": 0,
+  "pass": true
+}
+
+
+scripts/background-check.py: exit 0
+PASS: authenticated handoff, one database owner, foreground refusal, background reacquisition and data persistence
+
+make release-test: exit 0
+PASS: strict bundle signing, hardened Bun JSON-RPC, clean EOF shutdown and Claude binary startup; no model calls
+NOT RUN: hardened host launch with Sparkle requires an Apple signing Team ID; ad-hoc signing cannot satisfy library validation. Use Debug for local host execution. This is an S5 release gate, not a passed startup check.

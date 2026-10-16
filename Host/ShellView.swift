@@ -13,8 +13,11 @@ enum Palette {
     mint = Color(red: 110 / 255, green: 242 / 255, blue: 194 / 255),
     amber = Color(red: 245 / 255, green: 184 / 255, blue: 61 / 255)
 }
+private struct RecoveryRun: Identifiable { let id: String }
+
 struct ShellView: View {
   @Bindable var model: AppModel
+  @State private var recoveryRun: RecoveryRun?
   var body: some View {
     VStack(spacing: 0) {
       topBar
@@ -320,6 +323,13 @@ struct ShellView: View {
       }.padding(15).background(Palette.card, in: RoundedRectangle(cornerRadius: 15)).padding(16)
     }.background(Palette.panel)
   }
+  private var activityGroups: [String] {
+    var seen = Set<String>()
+    return model.activities.compactMap { item in
+      let key = item.runID ?? "direct"
+      return seen.insert(key).inserted ? key : nil
+    }
+  }
   private var activity: some View {
     VStack(alignment: .leading, spacing: 18) {
       HStack {
@@ -333,36 +343,56 @@ struct ShellView: View {
           "暂无活动", systemImage: "clock.arrow.circlepath",
           description: Text("应用写入数据或执行操作后，可以在这里查看详情和撤销。"))
       } else {
-        List(model.activities) { item in
-          VStack(alignment: .leading, spacing: 8) {
-            HStack {
-              VStack(alignment: .leading, spacing: 6) {
-                Text(item.action).font(.system(.body, design: .monospaced))
-                Text(item.target).font(.caption).foregroundStyle(Palette.muted)
-                Text(item.at).font(.caption2).foregroundStyle(Palette.muted)
+        List {
+          ForEach(activityGroups, id: \.self) { group in
+            Section {
+              ForEach(model.activities.filter { ($0.runID ?? "direct") == group }) { item in
+                VStack(alignment: .leading, spacing: 8) {
+                  HStack {
+                    VStack(alignment: .leading, spacing: 6) {
+                      Text(item.action).font(.system(.body, design: .monospaced))
+                      Text(item.target).font(.caption).foregroundStyle(Palette.muted)
+                      Text(item.at).font(.caption2).foregroundStyle(Palette.muted)
+                    }
+                    Spacer()
+                    if item.effect == .irreversible {
+                      Text("不可撤销").foregroundStyle(Palette.amber)
+                    } else if item.state == "applied"
+                      || (item.action.hasPrefix("files.")
+                        && ["done", "unknown"].contains(item.state))
+                      || (item.action == "calendar.create" && item.state == "done")
+                    {
+                      Button(item.undoOf == nil ? "撤销" : "撤销此操作") { model.undo(item) }
+                    } else {
+                      Text(
+                        [
+                          "done": "已完成", "failed": "失败", "unknown": "结果待核实", "pending": "等待确认",
+                          "ready": "待执行", "executing": "执行中", "compensated": "已补偿", "undone": "已撤销",
+                        ][item.state] ?? item.state
+                      ).foregroundStyle(Palette.muted)
+                    }
+                  }
+                  ActivityDetail(model: model, item: item)
+                }.accessibilityElement(children: .contain)
               }
-              Spacer()
-              if item.effect == .irreversible {
-                Text("不可撤销").foregroundStyle(Palette.amber)
-              } else if item.state == "applied"
-                || (item.action.hasPrefix("files.") && ["done", "unknown"].contains(item.state))
-                || (item.action == "calendar.create" && item.state == "done")
-              {
-                Button(item.undoOf == nil ? "撤销" : "撤销此操作") { model.undo(item) }
-              } else {
-                Text(
-                  [
-                    "done": "已完成", "failed": "失败", "unknown": "结果待核实", "pending": "等待确认",
-                    "ready": "待执行", "executing": "执行中", "compensated": "已补偿", "undone": "已撤销",
-                  ][item.state] ?? item.state
-                ).foregroundStyle(Palette.muted)
+            } header: {
+              HStack {
+                Text(group == "direct" ? "直接操作" : "运行 · " + String(group.prefix(8)))
+                Spacer()
+                if group != "direct" {
+                  Button("恢复此运行的数据") {
+                    recoveryRun = RecoveryRun(id: group)
+                  }
+                }
               }
             }
-            ActivityDetail(model: model, item: item)
-          }.accessibilityElement(children: .contain)
+          }
         }
       }
     }.padding(24).frame(width: 730, height: 560)
+      .sheet(item: $recoveryRun) { target in
+        GroupRecoveryPanel(model: model, initialRun: target.id)
+      }
   }
   private var versions: some View {
     VStack(alignment: .leading, spacing: 20) {

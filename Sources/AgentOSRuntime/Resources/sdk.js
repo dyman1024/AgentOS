@@ -27,7 +27,7 @@
       } else if (request.kind === 'event') {
         const fn = subscriptions.get(request.name); if (!fn) throw new Error('Subscription handler missing');
         await fn(request.args); result = {ok:true};
-      } else if (request.kind === 'state') result = {state:exposed(),frames};
+      } else if (request.kind === 'state') result = {state:await exposed(),frames};
       else throw new Error('Unknown invocation');
       dispatchEvent(new CustomEvent('aos-result', {detail:JSON.stringify({id:request.id,result:result === undefined ? null : result})}));
     } catch (error) {

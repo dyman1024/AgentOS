@@ -118,3 +118,177 @@ private let expenseMigration: Value = [
   #expect(try await kernel.verifyAudit())
   try await kernel.shutdown()
 }
+
+private func expenseApp(_ kernel: Kernel, namespace: String) async throws -> InstalledApp {
+  let app = try await kernel.createApp(title: namespace, namespace: namespace, context: user)
+  let src = try await kernel.sourceDirectory(app.id)
+  var interface = app.interface.object!
+  interface["data"] = [["collection": "expenses", "access": "rw"]]
+  try save(.object(interface), src.appendingPathComponent("interface/interface.json"))
+  let candidate = try await kernel.preparePackage(app.id, context: user)
+  try await kernel.activate(candidate, testsPassed: true, approvedCapabilities: true, context: user)
+  return try await kernel.app(app.id)
+}
+private func stageExpenseUpdate(_ kernel: Kernel, app: InstalledApp, migration: Value? = nil)
+  async throws
+{
+  let src = try await kernel.sourceDirectory(app.id)
+  var manifest = app.manifest.object!
+  manifest["version"] = "1.0.0+2"
+  if let migration {
+    manifest["update"] = ["dataSchema": ["plan": "migration.json"]]
+    try save(migration, src.appendingPathComponent("migration.json"))
+  }
+  try save(.object(manifest), src.appendingPathComponent("manifest.json"))
+}
+
+@Test func jointMigrationRequiresAllConsumersAndCommitsOneSchemaAndBackup() async throws {
+  let (k, root) = try fixture()
+  defer { try? FileManager.default.removeItem(at: root) }
+  try await k.registerSchema(
+    collection: "expenses", type: "expense", definition: oldExpense, context: user)
+  _ = try await k.put("expenses", id: "one", fields: ["title": "Tea", "amount": 8], context: user)
+  let a = try await expenseApp(k, namespace: "ledger")
+  let b = try await expenseApp(k, namespace: "report")
+  try await stageExpenseUpdate(k, app: a, migration: expenseMigration)
+  try await stageExpenseUpdate(k, app: b, migration: expenseMigration)
+  await expectCode("conflict") { _ = try await k.preparePackage(a.id, context: user) }
+  let group = try await k.preparePackages([a.id, b.id], context: user)
+  await expectCode("contract_failed") {
+    try await k.activatePackages(
+      group, testsPassed: false, approvedCapabilities: true, context: user)
+  }
+  await expectCode("needs_confirmation") {
+    try await k.activatePackages(
+      group, testsPassed: true, approvedCapabilities: false, context: user)
+  }
+  #expect(try await k.app(a.id).version == "1.0.0+1")
+  #expect(try await k.get("expenses", id: "one", context: user).fields["amount"] == 8)
+  try await k.activatePackages(group, testsPassed: true, approvedCapabilities: true, context: user)
+  #expect(try await k.app(a.id).version == "1.0.0+2")
+  #expect(try await k.app(b.id).version == "1.0.0+2")
+  #expect(try await k.get("expenses", id: "one", context: user).fields["total"] == 8)
+  #expect(try await k.schemas().array?.first { $0["collection"] == "expenses" }?["version"] == 2)
+  #expect(try await k.dataBackups().array?.count == 1)
+  #expect(try await k.verifyAudit())
+  try await k.shutdown()
+}
+
+@Test func jointMigrationRejectsConflictingPlansStaleDataAndNewConsumers() async throws {
+  let (k, root) = try fixture()
+  defer { try? FileManager.default.removeItem(at: root) }
+  try await k.registerSchema(
+    collection: "expenses", type: "expense", definition: oldExpense, context: user)
+  let a = try await expenseApp(k, namespace: "ledger")
+  let b = try await expenseApp(k, namespace: "report")
+  try await stageExpenseUpdate(k, app: a, migration: expenseMigration)
+  var different = expenseMigration.object!
+  different["steps"] = [
+    ["op": "rename", "from": "amount", "to": "total"],
+    ["op": "default", "field": "currency", "value": "USD"],
+  ]
+  try await stageExpenseUpdate(k, app: b, migration: .object(different))
+  await expectCode("conflict") { _ = try await k.preparePackages([a.id, b.id], context: user) }
+  try await stageExpenseUpdate(k, app: b, migration: expenseMigration)
+  let stale = try await k.preparePackages([a.id, b.id], context: user)
+  _ = try await k.put("expenses", fields: ["title": "New", "amount": 1], context: user)
+  await expectCode("conflict") {
+    try await k.activatePackages(
+      stale, testsPassed: true, approvedCapabilities: true, context: user)
+  }
+  let pending = try await k.preparePackages([a.id, b.id], context: user)
+  _ = try await expenseApp(k, namespace: "newconsumer")
+  await expectCode("conflict") {
+    try await k.activatePackages(
+      pending, testsPassed: true, approvedCapabilities: true, context: user)
+  }
+  #expect(try await k.app(a.id).version == "1.0.0+1")
+  #expect(try await k.dataBackups().array?.isEmpty == true)
+  try await k.shutdown()
+}
+
+extension Kernel {
+  fileprivate func failActivation(of id: String) throws {
+    // Fail late, after migration and at least one package update, inside the outer transaction.
+    try db.execute(
+      "CREATE TRIGGER fail_joint BEFORE INSERT ON app_versions WHEN NEW.app_id='\(id)' AND NEW.version='1.0.0+2' BEGIN SELECT RAISE(ABORT,'injected activation failure'); END"
+    )
+  }
+}
+@Test func jointActivationRollsBackDataEventsGrantsAndAllVersionsOnLateFailure() async throws {
+  let (k, root) = try fixture()
+  defer { try? FileManager.default.removeItem(at: root) }
+  try await k.registerSchema(
+    collection: "expenses", type: "expense", definition: oldExpense, context: user)
+  _ = try await k.put("expenses", id: "one", fields: ["title": "Tea", "amount": 2], context: user)
+  let a = try await expenseApp(k, namespace: "ledger")
+  let b = try await expenseApp(k, namespace: "report")
+  try await stageExpenseUpdate(k, app: a, migration: expenseMigration)
+  try await stageExpenseUpdate(k, app: b)
+  let group = try await k.preparePackages([a.id, b.id], context: user)
+  let events = try await k.events()
+  try await k.failActivation(of: group.last!.appID)
+  await expectCode("storage") {
+    try await k.activatePackages(
+      group, testsPassed: true, approvedCapabilities: true, context: user)
+  }
+  #expect(try await k.app(a.id).version == "1.0.0+1")
+  #expect(try await k.app(b.id).version == "1.0.0+1")
+  #expect(try await k.get("expenses", id: "one", context: user).fields["amount"] == 2)
+  #expect(try await k.history("expenses", id: "one", context: user).array?.count == 1)
+  #expect(try await k.events() == events)
+  for package in group {
+    #expect(
+      !FileManager.default.fileExists(
+        atPath: root.appendingPathComponent("apps/\(package.appID)/versions/\(package.version)")
+          .path))
+  }
+  #expect(try await k.verifyAudit())
+  try await k.shutdown()
+}
+
+@Test func jointInterfaceChangesRequireAllCallersAndRecheckNewCallers() async throws {
+  let (k, root) = try fixture()
+  defer { try? FileManager.default.removeItem(at: root) }
+  let a = try await k.createApp(title: "Producer", namespace: "producer", context: user)
+  let source = try await k.sourceDirectory(a.id)
+  try save(definition(a.namespace), source.appendingPathComponent("interface/interface.json"))
+  let first = try await k.preparePackage(a.id, context: user)
+  try await k.activate(first, testsPassed: true, approvedCapabilities: true, context: user)
+  func caller(_ namespace: String) async throws -> InstalledApp {
+    let app = try await k.createApp(title: namespace, namespace: namespace, context: user)
+    let src = try await k.sourceDirectory(app.id)
+    var value = app.interface.object!
+    value["calls"] = ["producer.list"]
+    try save(.object(value), src.appendingPathComponent("interface/interface.json"))
+    let prepared = try await k.preparePackage(app.id, context: user)
+    try await k.activate(prepared, testsPassed: true, approvedCapabilities: true, context: user)
+    return try await k.app(app.id)
+  }
+  let b = try await caller("consumer")
+  try await stageExpenseUpdate(k, app: a)
+  try await stageExpenseUpdate(k, app: b)
+  try save(
+    definition(a.namespace, required: true),
+    source.appendingPathComponent("interface/interface.json"))
+  let spare = try await k.createApp(title: "Spare", namespace: "spare", context: user)
+  await expectCode("conflict") { _ = try await k.preparePackages([a.id, spare.id], context: user) }
+  let group = try await k.preparePackages([a.id, b.id], context: user)
+  await expectCode("needs_confirmation") {
+    try await k.activatePackages(
+      group, testsPassed: true, approvedCapabilities: false, context: user)
+  }
+  let late = try await caller("lateconsumer")
+  await expectCode("conflict") {
+    try await k.activatePackages(
+      group, testsPassed: true, approvedCapabilities: true, context: user)
+  }
+  try await stageExpenseUpdate(k, app: late)
+  let complete = try await k.preparePackages([a.id, b.id, late.id], context: user)
+  try await k.activatePackages(
+    complete, testsPassed: true, approvedCapabilities: true, context: user)
+  #expect(try await k.app(a.id).version == "1.0.0+2")
+  #expect(try await k.app(b.id).version == "1.0.0+2")
+  #expect(try await k.app(late.id).version == "1.0.0+2")
+  try await k.shutdown()
+}

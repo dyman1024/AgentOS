@@ -122,6 +122,8 @@ struct Approval: Identifiable {
     agent.onUpdate = { [weak self] run, update in self?.receive(run, update) }
     cli = try CLIService(root: root) { [weak self] method, args, dry in
       guard let self else { throw HostError("unavailable", "Host stopped") }
+      if method == "validation.state" { return try self.localValidationState() }
+      if method == "validation.local" { return try await self.localHostChecks() }
       if method == "evaluation.run" { return try await self.evaluate(args) }
       if method == "evaluation.research" { return try await self.evaluateResearch(args) }
       if method == "system.releaseBackground" {

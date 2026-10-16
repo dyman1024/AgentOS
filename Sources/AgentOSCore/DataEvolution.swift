@@ -32,6 +32,13 @@ extension Kernel {
   public func prepareMigration(_ plan: Value, excludingApp: String? = nil, context: RequestContext)
     throws -> PreparedDataChange
   {
+    try prepareMigration(
+      plan, excludingApps: Set(excludingApp.map { [$0] } ?? []), context: context)
+  }
+
+  func prepareMigration(
+    _ plan: Value, excludingApps excludedApps: Set<String>, context: RequestContext
+  ) throws -> PreparedDataChange {
     let collection = try plan.requiredString("collection")
     try require(context, capability: "schemas.migrate", scope: collection)
     guard plan["schema"] == "agentos.migration/1",
@@ -49,7 +56,7 @@ extension Kernel {
     guard plan["fromVersion"]?.int == version, plan["toVersion"]?.int == version + 1 else {
       throw HostError("conflict", "Schema version changed or target is not the next version")
     }
-    try requireNoDataDependents(collection, excludingApp: excludingApp)
+    try requireNoDataDependents(collection, excludingApps: excludedApps)
     let records = try before["records"]!.array!.map { value -> Record in
       let old = try value.decode(Record.self)
       var fields = old.fields
@@ -110,9 +117,9 @@ extension Kernel {
       ])
   }
 
-  func requireNoDataDependents(_ collection: String, excludingApp: String?) throws {
+  func requireNoDataDependents(_ collection: String, excludingApps: Set<String>) throws {
     let dependents = try installedApps().filter {
-      $0.version != "draft" && $0.id != excludingApp
+      $0.version != "draft" && !excludingApps.contains($0.id)
         && (try? AppInterface($0.interface).data[collection]) != nil
     }
     guard dependents.isEmpty else {
@@ -223,6 +230,9 @@ extension Kernel {
     let capability =
       change.summary["fromVersion"] != nil ? "schemas.migrate" : "data.restoreCollection"
     try require(context, capability: capability, scope: change.collection)
+    if change.summary["fromVersion"] != nil {
+      try requireNoDataDependents(change.collection, excludingApps: [])
+    }
     guard approved else {
       throw HostError(
         "needs_confirmation", "Review the complete data change", details: change.summary)

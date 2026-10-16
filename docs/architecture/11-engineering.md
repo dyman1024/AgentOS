@@ -32,7 +32,7 @@ make run
 
 | 命令 | 验证范围 | 是否付费/需要账户 |
 |---|---|---|
-| `make core-test` | 55 项 Swift Testing：事务、撤销、权限、预算、事件、迁移、包、HTTP、文件、邮件、MCP | 否 |
+| `make core-test` | 64 项 Swift Testing：事务、撤销、权限、预算、事件、迁移、包、HTTP、文件、邮件、MCP | 否 |
 | `make selftest` | 真实 WebKit 核心、协议、事件、自动化、WASM、解析、UI Kit | 否 |
 | `make sandbox-test` | 上述集成及所有 `sandbox-*.html` 探针 | 否 |
 | `make native-test` | swiftc、Seatbelt、共享数据调用、进程退出与恢复 | 否；需要 CLT |
@@ -96,3 +96,8 @@ Debug 使用 ad-hoc；Release 打开 hardened runtime，并对 Bun 引擎、Clau
 Release 本机启动限制：Apple 的 library validation 不接受没有 Team ID 的 ad-hoc 宿主加载 Sparkle。即使双方都严格验签通过也不能满足这一运行条件，见 [Sparkle 官方说明](https://sparkle-project.org/documentation/)。保留 Release 的 library validation；无证书时 CI 只验证构建、签名和独立 sidecar 启动，将 Release 宿主启动明确标为 NOT RUN。开发宿主使用 Debug。
 
 托管 CI 缺少 Apple 中文句向量资源时，真实中文语义集成测试显示 skipped；不会伪装通过或改成外部模型。另一个确定性测试验证缺少语言资源时返回 unavailable。本机中文模型存在，已实际运行相关性/版本/本地性测试。CI 的通过结论必须带上这一平台资源限制。
+
+
+本地无账户验收入口：`python3 scripts/local-host-check.py` 启动显式隔离的数据根，生成静音 WAV，验证真实 AVFoundation 解码、播放/暂停/跳转、进度保存、撤权，以及两次非正常退出后的恢复模式；随后关闭进程并清理临时数据。`validation.local/state` 仅在 `AGENTOS_LOCAL_CHECKS=1` 且根目录名以 `agentos-local-check-` 开头的宿主可调用，正常宿主拒绝。CI 在 Debug 构建后执行该脚本。
+
+桌面演化夹具用 `python3 scripts/prepare-evolution-fixtures.py` 准备两个待联合升级的应用和一个可生成桌面；由真实界面确认迁移和恢复，不使用模型。脚本不会批准迁移或配置真实账户。

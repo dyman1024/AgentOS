@@ -73,6 +73,10 @@ extension Kernel {
     case "data.schemas":
       try require(context, capability: "data.read", scope: args["collection"]?.string ?? "*")
       return try schemas()
+    case "data.previewGroupRecovery":
+      return try prepareGroupRecovery(args, context: context).summary
+    case "data.recoveryGroups":
+      return try recoveryGroups(context: context)
     case "data.previewMigration":
       return try prepareMigration(args, context: context).summary
     case "data.get":

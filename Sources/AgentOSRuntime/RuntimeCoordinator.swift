@@ -36,6 +36,7 @@ import Foundation
   private var nativeBinaries: [String: URL] = [:]
   private var candidates: [String: (InstalledApp, URL)] = [:]
   private var busy: Set<String> = []
+  private var updating: Set<String> = []
   private var pumping = false
   public var hasActiveWork: Bool {
     !busy.isEmpty || !automationTasks.isEmpty || pumping || backends?.hasActiveWork == true
@@ -182,6 +183,9 @@ import Foundation
     nativeUIs[item.id] = try await native(item, core: false)
   }
   public func route(_ method: String, args: Value, context: RequestContext) async throws -> Value {
+    if let id = context.principal.appID, updating.contains(id) {
+      throw HostError("conflict", "Application update is committing")
+    }
     switch method {
     case "backend.call":
       guard let id = context.principal.appID, case .core = context.principal, let backends else {
@@ -215,6 +219,19 @@ import Foundation
           ticket.id, state: "unknown", result: ["message": .string(error.localizedDescription)])
         throw error
       }
+    case "data.restoreGroup":
+      let change = try await kernel.prepareGroupRecovery(args, context: context)
+      guard change.summary["canApply"] == true else {
+        throw HostError("conflict", "Recovery is empty or has conflicts", details: change.summary)
+      }
+      guard try await kernel.initiator(of: context) != .service("cli"),
+        await confirm?("恢复所选应用或运行的数据写入", change.summary) == true
+      else {
+        throw HostError(
+          "needs_confirmation", "Group recovery requires host confirmation", details: change.summary
+        )
+      }
+      return try await kernel.applyGroupRecovery(change, approved: true, context: context)
     case "data.migrate":
       let change = try await kernel.prepareMigration(args, context: context)
       guard try await kernel.initiator(of: context) != .service("cli"),
@@ -287,6 +304,11 @@ import Foundation
     case "apps.call":
       return try await call(args.requiredString("tool"), args: args["args"] ?? [:], caller: context)
     case "apps.commit": return try await commit(args.requiredString("app"), context: context)
+    case "apps.commitGroup":
+      guard let ids = args["apps"]?.array, ids.allSatisfy({ $0.string != nil }) else {
+        throw HostError("invalid_args", "Provide an apps array")
+      }
+      return try await commitGroup(ids.compactMap(\.string), context: context)
     case "runtime.inspect":
       let id = try args.requiredString("app")
       try await kernel.authorize(context, capability: "app.read", scope: id)
@@ -327,6 +349,9 @@ import Foundation
     let pieces = name.split(separator: ".", maxSplits: 1).map(String.init)
     guard pieces.count == 2 else { throw HostError("not_found", "Use namespace.tool") }
     let app = try await resolve(pieces[0])
+    guard !updating.contains(app.id) else {
+      throw HostError("conflict", "Application update is committing")
+    }
     let definition = try AppInterface(app.interface)
     guard let tool = definition.tools.first(where: { $0.name == pieces[1] }) else {
       throw HostError("not_found", "Unknown tool")
@@ -451,37 +476,69 @@ import Foundation
         core.close()
         cores[id] = nil
       }
-    } catch
-    { /* Retry on the next host tick. Individual delivery failures are persisted by the bus. */  }
+    } catch {
+      // Retry on the next host tick. Individual delivery failures are persisted by the bus.
+    }
   }
   public func commit(_ id: String, context: RequestContext) async throws -> Value {
-    let prepared = try await kernel.preparePackage(id, context: context)
-    defer { try? FileManager.default.removeItem(at: prepared.directory) }
-    let report = try await contractTests(prepared)
-    guard report["pass"]?.bool == true else {
-      throw HostError(
-        "contract_failed", "Candidate failed isolated contract tests", details: report)
+    let result = try await commitGroup([id], context: context)
+    let item = result["apps"]!.array![0]
+    return ["app": item["app"]!, "version": item["version"]!, "tests": result["tests"]!]
+  }
+  public func commitGroup(_ ids: [String], context: RequestContext) async throws -> Value {
+    let packages = try await kernel.preparePackages(ids, context: context)
+    defer { for package in packages { try? FileManager.default.removeItem(at: package.directory) } }
+    var reports: [Value] = []
+    for package in packages {
+      let report = try await contractTests(package, participants: packages)
+      guard report["pass"]?.bool == true else {
+        throw HostError(
+          "contract_failed", "Candidate failed isolated contract tests",
+          details: ["app": .string(package.appID), "report": report])
+      }
+      reports.append(["app": .string(package.appID), "report": report])
     }
+    var approved = false
     do {
-      try await kernel.activate(
-        prepared, testsPassed: true, approvedCapabilities: false, context: context)
+      try await kernel.validatePackages(
+        packages, testsPassed: true, approvedCapabilities: false, context: context)
     } catch let error as HostError where error.code == "needs_confirmation" {
-      guard context.principal != .service("cli") else { throw error }
+      guard try await kernel.initiator(of: context) != .service("cli") else { throw error }
       guard
         await confirm?(
-          "批准应用能力与数据变更",
-          [
-            "manifest": prepared.manifest, "interface": prepared.interface.raw,
-            "migration": prepared.migration?.summary ?? .null,
-          ]) == true
-      else { throw HostError("denied", "Capability request was not approved") }
-      try await kernel.activate(
-        prepared, testsPassed: true, approvedCapabilities: true, context: context)
+          "批准应用联合更新与数据变更",
+          .array(
+            packages.map {
+              [
+                "app": .string($0.appID), "fromVersion": .string($0.baseVersion),
+                "manifest": $0.manifest, "interface": $0.interface.raw,
+                "migration": $0.migration?.summary ?? .null,
+                "interfaceChanges": .array($0.interfaceChanges.map(Value.string)),
+              ]
+            })) == true
+      else { throw HostError("denied", "Update was not approved") }
+      approved = true
     }
-    reload(id)
-    return ["app": .string(id), "version": .string(prepared.version), "tests": report]
+    let participants = Set(packages.map(\.appID))
+    guard busy.isDisjoint(with: participants), updating.isDisjoint(with: participants) else {
+      throw HostError("conflict", "An update participant is still executing; retry when idle")
+    }
+    updating.formUnion(participants)
+    defer { updating.subtract(participants) }
+    for id in participants { reload(id) }
+    try await kernel.activatePackages(
+      packages, testsPassed: true, approvedCapabilities: approved, context: context)
+    return [
+      "apps": .array(packages.map { ["app": .string($0.appID), "version": .string($0.version)] }),
+      "tests": ["pass": true, "participants": .array(reports), "isolated": true],
+    ]
   }
   public func contractTests(_ package: PreparedPackage) async throws -> Value {
+    try await contractTests(package, participants: [package])
+  }
+  private func contractTests(_ package: PreparedPackage, participants: [PreparedPackage])
+    async throws -> Value
+  {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(
       "agentos-contract-" + UUID().uuidString)
     let testKernel = try Kernel(root: root)
@@ -494,6 +551,10 @@ import Foundation
       }
     }
     do {
+      for participant in participants {
+        try await configureContractCandidate(
+          participant, participants: participants, kernel: testKernel, runner: runner)
+      }
       let result = try await runContractSuite(package, kernel: testKernel, runner: runner)
       runner.closeAll()
       await runner.backends?.closeAll()
@@ -506,24 +567,26 @@ import Foundation
       throw error
     }
   }
-  private func runContractSuite(
-    _ package: PreparedPackage, kernel testKernel: Kernel, runner: RuntimeCoordinator
-  ) async throws -> Value {
+  private func configureContractCandidate(
+    _ package: PreparedPackage, participants: [PreparedPackage], kernel testKernel: Kernel,
+    runner: RuntimeCoordinator
+  ) async throws {
     let app = InstalledApp(
       id: package.appID, namespace: package.interface.namespace, version: package.version,
       manifest: package.manifest, interface: package.interface.raw)
     runner.candidates[app.id] = (app, package.directory)
+    let migrations = participants.compactMap(\.migration)
     for schema in try await kernel.schemas().array ?? []
     where package.interface.data[schema["collection"]?.string ?? ""] != nil {
       let collection = schema["collection"]!.string!
+      let migration = migrations.first { $0.collection == collection }
       let existing = try await testKernel.schemas().array ?? []
       if !existing.contains(where: { $0["collection"]?.string == collection }) {
         try await testKernel.registerSchema(
           collection: collection, type: schema["type"]!.string!,
-          definition: package.migration?.collection == collection
-            ? package.migration!.definition : Value.parse(schema["definition"]!.string!),
+          definition: try migration?.definition ?? Value.parse(schema["definition"]!.string!),
           isPrivate: schema["private"]?.int == 1,
-          version: package.migration?.collection == collection
+          version: migration != nil
             ? (schema["version"]?.int ?? 1) + 1 : (schema["version"]?.int ?? 1),
           context: RequestContext(.user))
       }
@@ -540,9 +603,17 @@ import Foundation
       _ = try await testKernel.grant(
         holder: .core(app.id), capability: "service", scope: "backend.call")
     }
+    for name in package.interface.calls {
+      _ = try await testKernel.grant(holder: .core(app.id), capability: "call", scope: name)
+    }
     for pattern in package.interface.subscriptions {
       _ = try await testKernel.grant(holder: .core(app.id), capability: "subscribe", scope: pattern)
     }
+  }
+  private func runContractSuite(
+    _ package: PreparedPackage, kernel testKernel: Kernel, runner: RuntimeCoordinator
+  ) async throws -> Value {
+    let app = runner.candidates[package.appID]!.0
     let tests =
       try Value.parse(
         String(

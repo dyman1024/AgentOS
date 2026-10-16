@@ -77,6 +77,8 @@ import Foundation
       r.closeAll()
       try? FileManager.default.removeItem(at: root)
     }
+    try await asyncStateHealth(k, r)
+    try await jointEvolution(k, r)
     try await wasm(k, r)
     try await mailAutomation(k, r)
     let notes = try await make(
@@ -170,7 +172,8 @@ import Foundation
   @MainActor static func mailAutomation(_ kernel: Kernel, _ runtime: RuntimeCoordinator)
     async throws
   {
-    runtime.confirm = { _, _ in true }  // Explicit fixture-only host consent; no real account is connected.
+    // Explicit fixture-only host consent; no real account is connected.
+    runtime.confirm = { _, _ in true }
     defer { runtime.confirm = nil }
     let app = try await make(
       kernel, runtime, "mailreview", tools: [tool("review")],
@@ -321,5 +324,155 @@ import Foundation
         }
       }
     }
+  }
+}
+
+extension Checks {
+  @MainActor static func jointEvolution(_ k: Kernel, _ r: RuntimeCoordinator) async throws {
+    let user = RequestContext(.user)
+    try await k.registerSchema(
+      collection: "jointrecords", type: "jointrecord",
+      definition: [
+        "type": "object", "properties": ["amount": ["type": "number"]], "required": ["amount"],
+        "additionalProperties": false,
+      ], context: user)
+    var apps: [InstalledApp] = []
+    for name in ["jointwriter", "jointreader"] {
+      let app = try await make(
+        k, r, name, tools: [tool("write", output: ["$ref": "user:schema/jointrecord@1"])],
+        data: [["collection": "jointrecords", "access": "rw"]],
+        core:
+          "agentos.tools.register('write',async()=>agentos.data.collection('jointrecords').put({amount:3}).then(record=>({amount:record.amount})));",
+        tests: [["name": "old schema", "tool": "write", "args": [:], "expect": ["amount": 3]]])
+      apps.append(app)
+    }
+    _ = try await k.put("jointrecords", id: "existing", fields: ["amount": 9], context: user)
+    for (index, app) in apps.enumerated() {
+      let src = try await k.sourceDirectory(app.id)
+      var manifest = app.manifest.object!
+      manifest["version"] = "1.0.0+2"
+      if index == 0 {
+        manifest["update"] = ["dataSchema": ["plan": "migration.json"]]
+        let migration: Value = [
+          "schema": "agentos.migration/1", "collection": "jointrecords", "fromVersion": 1,
+          "toVersion": 2,
+          "definition": [
+            "type": "object", "properties": ["total": ["type": "number"]], "required": ["total"],
+            "additionalProperties": false,
+          ],
+          "steps": [["op": "rename", "from": "amount", "to": "total"]],
+        ]
+        try migration.encoded().write(to: src.appendingPathComponent("migration.json"))
+      }
+      try Value.object(manifest).encoded().write(to: src.appendingPathComponent("manifest.json"))
+      let core =
+        index == 0
+        ? "agentos.tools.register('write',async()=>agentos.call('jointreader.write',{}));"
+        : "agentos.tools.register('write',async()=>agentos.data.collection('jointrecords').put({total:3}).then(record=>({total:record.total})));"
+      try Data(core.utf8).write(to: src.appendingPathComponent("core.js"))
+      var interface = app.interface.object!
+      interface["tools"] = [tool("write", output: ["$ref": "user:schema/jointrecord@2"])]
+      if index == 0 { interface["calls"] = ["jointreader.write"] }
+      try Value.object(interface).encoded().write(
+        to: src.appendingPathComponent("interface/interface.json"))
+      let tests: Value = [
+        [
+          "name": "target schema", "tool": "write", "args": [:],
+          "expect": ["total": index == 1 ? 999 : 3],
+        ]
+      ]
+      try tests.encoded().write(to: src.appendingPathComponent("tests/contract.json"))
+    }
+    do {
+      _ = try await r.commitGroup(apps.map(\.id), context: user)
+      throw HostError("test_failed", "Bad joint contract unexpectedly activated")
+    } catch let error as HostError {
+      try expect(
+        error.code == "contract_failed", "joint update rejects a failing participant contract")
+    }
+    try expect(
+      try await k.get("jointrecords", id: "existing", context: user).fields["amount"] == 9,
+      "failed joint contracts preserve live data")
+    let reader = try await k.sourceDirectory(apps[1].id)
+    let tests: Value = [
+      ["name": "target schema", "tool": "write", "args": [:], "expect": ["total": 3]]
+    ]
+    try tests.encoded().write(to: reader.appendingPathComponent("tests/contract.json"))
+    r.confirm = { _, _ in true }
+    _ = try await r.commitGroup(apps.map(\.id), context: user)
+    r.confirm = nil
+    try expect(
+      try await k.query("jointrecords", context: user).count == 1,
+      "joint contract writes remain isolated from live records")
+    try expect(
+      try await k.get("jointrecords", id: "existing", context: user).fields["total"] == 9,
+      "all participant contracts use target schema and staged cross-app tools")
+    let run = try await k.startRun(session: "joint-runtime-recovery")
+    _ = try await r.call(
+      "jointwriter.write", args: [:], caller: RequestContext(.run(run), runID: run))
+    let selection: Value = ["kind": "run", "id": .string(run)]
+    let preview = try await k.prepareGroupRecovery(selection, context: user)
+    try expect(
+      preview.summary["effects"] == 1, "cross-app calls retain run attribution for grouped recovery"
+    )
+    do {
+      _ = try await r.route(
+        "data.restoreGroup", args: selection, context: RequestContext(.service("cli")))
+      throw HostError("test_failed", "CLI bypassed confirmation")
+    } catch let error as HostError {
+      try expect(error.code == "needs_confirmation", "CLI cannot approve grouped recovery")
+    }
+    r.confirm = { _, _ in false }
+    do { _ = try await r.route("data.restoreGroup", args: selection, context: user) } catch let
+      error as HostError
+    {
+      try expect(
+        error.code == "needs_confirmation", "declining group recovery leaves data unchanged")
+    }
+    try expect(
+      try await k.query("jointrecords", context: user).count == 2,
+      "declined recovery does not write")
+    r.confirm = { _, _ in true }
+    _ = try await r.route("data.restoreGroup", args: selection, context: user)
+    r.confirm = nil
+    try expect(
+      try await k.query("jointrecords", context: user).count == 1,
+      "approved runtime recovery restores only the chosen run")
+  }
+}
+
+extension Checks {
+  @MainActor static func asyncStateHealth(_ k: Kernel, _ r: RuntimeCoordinator) async throws {
+    let responsive = try await make(
+      k, r, "asyncstate", tools: [tool("ping")], data: [],
+      core: "agentos.tools.register('ping',()=>({ok:true}));",
+      tests: [["name": "ping", "tool": "ping", "args": [:], "expect": ["ok": true]]],
+      ui:
+        "<script>agentos.expose(async()=>{await new Promise(resolve=>setTimeout(resolve,10));return {ready:true};});</script>"
+    )
+    let view = try await r.instance(responsive.id, core: false)
+    let state = try await bounded(seconds: 2) {
+      try await view.invoke(kind: "state", name: "", args: [:])
+    }
+    try expect(
+      state["state"]?["ready"] == true,
+      "asynchronous exposed state is awaited before health success")
+    r.reload(responsive.id)
+    let hanging = try await make(
+      k, r, "pendingstate", tools: [tool("ping")], data: [],
+      core: "agentos.tools.register('ping',()=>({ok:true}));",
+      tests: [["name": "ping", "tool": "ping", "args": [:], "expect": ["ok": true]]],
+      ui: "<script>agentos.expose(()=>new Promise(()=>{}));</script>")
+    let pending = try await r.instance(hanging.id, core: false)
+    do {
+      _ = try await bounded(seconds: 0.1) {
+        try await pending.invoke(kind: "state", name: "", args: [:])
+      }
+      throw HostError("test_failed", "Unresolved state passed health check")
+    } catch let error as HostError {
+      try expect(
+        error.code == "timeout", "unresolved asynchronous state fails bounded health check")
+    }
+    r.reload(hanging.id)
   }
 }

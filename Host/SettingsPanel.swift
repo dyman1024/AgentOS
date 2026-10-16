@@ -309,7 +309,7 @@ struct SettingsPanel: View {
           Text("卸载或回滚应用不删除共享数据。导出包含集合、schema 和来源标签。").foregroundStyle(Palette.muted)
           Button("导出全部数据…") { model.exportData() }
           Button("导入数据备份…") { model.importData() }
-          Button("备份与恢复集合…") { showRestore = true }
+          Button("备份、分组恢复与联合更新…") { showRestore = true }
           Button("导入签名应用包…") { model.importApp() }
           Button("检查 AgentOS 更新") { Updates.shared.check() }.disabled(!Updates.shared.configured)
           if !Updates.shared.configured { Text("开发构建尚未配置签名更新源。").font(.caption) }

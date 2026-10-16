@@ -173,8 +173,27 @@ Builder 打包源码和清单（以 sha256 标识）
 
 ### 重建激活语义
 
-当前激活版本以 kernel.sqlite 的 packages.version 为准。准备阶段生成不可变快照，契约测试在临时数据根运行，成功后登记版本和授权。已撤销授权不会因升级自动恢复。回滚保留数据；`update.dataSchema.plan` 指向 `agentos.migration/1` 声明，执行字段 rename/default/remove。其他应用仍依赖该集合时拒绝迁移；需要用户先处理依赖。`current` 符号链接不作为权威状态。
+当前激活版本以 kernel.sqlite 的 packages.version 为准。准备阶段生成不可变快照，契约测试在临时数据根运行，成功后登记版本和授权。已撤销授权不会因升级自动恢复。回滚保留数据；`update.dataSchema.plan` 指向 `agentos.migration/1` 声明，执行字段 rename/default/remove。其他应用仍依赖该集合时，必须通过 `apps.commitGroup` 一起提交候选版本。`current` 符号链接不作为权威状态。
 
 迁移声明必须指定 collection/fromVersion/toVersion/definition/steps。`toVersion` 是当前版本加一；只支持用户集合，禁止包修改系统 schema。契约测试使用迁移后的 schema 和独立数据根。升级后的数据如需恢复，使用设置中的集合备份恢复；代码回滚不隐式恢复数据。`apps.diff` 对比已校验版本或工作区，返回文件摘要与有界文本差异。
 
 OCI 后端使用 `runtime.backend={language:"oci",entry:"backend.oci.tar",files:["backend.oci.tar"]}`，并申请 `backend.call`。镜像要求与运行语义见 [VM 说明](../../vm/README.md)。其 UI/核心仍遵循同一协议，不直接运行在宿主进程中。
+
+
+### 联合 schema 更新
+
+`apps.commitGroup({apps:[id,…]})` 接受 1–20 个不同应用。宿主预检全部候选源码，收集 `update.dataSchema.plan`，要求每个受影响集合的所有已安装消费者都参加。一个集合只迁移一次；多个应用声明该集合时，版本、目标定义、步骤和预检结果必须一致。工具 IDL 如需改变 schema 引用或其他不兼容形状，必须联合纳入该应用的全部已安装调用方；预检和激活时均重新检查。单应用提交仍拒绝破坏性变更，宿主确认会明确列出接口变化，受影响固定自动化会按原规则暂停等待重新批准。
+
+```mermaid
+flowchart LR
+  A[全部消费者候选源码] --> B[迁移预检和不可变快照]
+  B --> C["每个应用独立契约环境<br/>全部候选可互相调用<br/>使用目标 schema"]
+  C --> D[宿主确认应用和数据变更]
+  D --> E[重查源码、活动版本、消费者和数据摘要]
+  E --> F[保存备份并准备版本文件]
+  F --> G["同一 SQLite 事务<br/>schema、记录、历史、事件、授权、全部活动版本"]
+```
+
+任一契约失败、确认被拒绝、预览过期或事务内错误都不激活任何候选。契约数据与活跃数据隔离；迁移预检逐条验证真实记录，契约使用自己的测试数据验证目标 schema。确认等待期间应用可继续运行，提交时要求参与核心空闲并阻止新调用；提交后旧核心和界面失效。数据库中的活动版本是唯一权威，失败时删除尚未登记的版本目录；源码 Git 提交只是修复历史。
+
+设置 → 数据 → 联合更新可选择参与应用并执行同一路径。CLI 可以请求测试，但不能批准迁移；需要确认时返回 `needs_confirmation`。

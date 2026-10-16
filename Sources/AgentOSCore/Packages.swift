@@ -19,11 +19,13 @@ public struct InstalledApp: Codable, Sendable, Identifiable {
 public struct PreparedPackage: Sendable {
   public let appID: String
   public let version: String
+  public let baseVersion: String
   public let directory: URL
   public let manifest: Value
   public let interface: AppInterface
   public let digest: String
   public let migration: PreparedDataChange?
+  public let interfaceChanges: [String]
 }
 public enum SafePath {
   public static func resolve(_ relative: String, under root: URL, mustExist: Bool = true) throws
@@ -134,6 +136,11 @@ extension Kernel {
     return root.appendingPathComponent("apps/\(item.id)/versions/\(item.version)")
   }
   public func preparePackage(_ id: String, context: RequestContext) throws -> PreparedPackage {
+    try preparePackage(id, participants: [try app(id).id], context: context)
+  }
+  func preparePackage(_ id: String, participants: Set<String>, context: RequestContext) throws
+    -> PreparedPackage
+  {
     try require(context, capability: "app.commit", scope: id)
     let item = try app(id)
     let source = try sourceDirectory(item.id)
@@ -188,15 +195,19 @@ extension Kernel {
         throw HostError("invalid_package", "OCI backends accept one OCI image-layout tar archive")
       }
     }
+    var interfaceChanges: [String] = []
     if item.version != "draft" {
       guard Version(version)! > Version(item.version)! else {
         throw HostError("conflict", "Version must increase")
       }
-      let changes = definition.breakingChanges(from: try AppInterface(item.interface))
-      guard changes.isEmpty else {
-        throw HostError(
-          "conflict", "Breaking interface changes require explicit dependency migration",
-          details: .array(changes.map(Value.string)))
+      interfaceChanges = definition.breakingChanges(from: try AppInterface(item.interface))
+      if !interfaceChanges.isEmpty {
+        guard participants.count > 1 else {
+          throw HostError(
+            "conflict", "Breaking interface changes require a joint dependency update",
+            details: .array(interfaceChanges.map(Value.string)))
+        }
+        try requireNoCallDependents(item.namespace, excludingApps: participants)
       }
     }
     for collection in definition.data.keys {
@@ -215,15 +226,17 @@ extension Kernel {
         throw HostError(
           "invalid_package", "Migration requires declared read/write collection access")
       }
-      migration = try prepareMigration(plan, excludingApp: item.id, context: context)
+      migration = try prepareMigration(plan, excludingApps: participants, context: context)
     }
     let directory = root.appendingPathComponent("system/staging/\(UUID().uuidString)")
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     do {
       try Self.copyTree(source, to: directory)
       return PreparedPackage(
-        appID: item.id, version: version, directory: directory, manifest: manifest,
-        interface: definition, digest: try Self.treeDigest(directory), migration: migration)
+        appID: item.id, version: version, baseVersion: item.version, directory: directory,
+        manifest: manifest,
+        interface: definition, digest: try Self.treeDigest(directory), migration: migration,
+        interfaceChanges: interfaceChanges)
     } catch {
       try? FileManager.default.removeItem(at: directory)
       throw error
@@ -234,6 +247,15 @@ extension Kernel {
     _ prepared: PreparedPackage, testsPassed: Bool, approvedCapabilities: Bool,
     context: RequestContext
   ) throws {
+    try activatePackages(
+      [prepared], testsPassed: testsPassed, approvedCapabilities: approvedCapabilities,
+      context: context)
+  }
+
+  func validateActivation(
+    _ prepared: PreparedPackage, participants: Set<String>, testsPassed: Bool,
+    approvedCapabilities: Bool, context: RequestContext
+  ) throws {
     try require(context, capability: "app.commit", scope: prepared.appID)
     guard testsPassed else {
       throw HostError("contract_failed", "Candidate failed its contract tests")
@@ -241,13 +263,27 @@ extension Kernel {
     guard try Self.treeDigest(prepared.directory) == prepared.digest else {
       throw HostError("conflict", "Candidate changed after verification")
     }
+    guard try app(prepared.appID).version == prepared.baseVersion else {
+      throw HostError("conflict", "Active application version changed during verification")
+    }
     let source = try sourceDirectory(prepared.appID)
     guard try Self.treeDigest(source) == prepared.digest else {
       throw HostError("conflict", "Source changed during verification; run tests again")
     }
+    if !prepared.interfaceChanges.isEmpty {
+      guard participants.count > 1 else {
+        throw HostError("conflict", "Breaking candidate requires its joint update")
+      }
+      try requireNoCallDependents(prepared.interface.namespace, excludingApps: participants)
+      guard approvedCapabilities else {
+        throw HostError(
+          "needs_confirmation", "Joint update changes tool contracts",
+          details: .array(prepared.interfaceChanges.map(Value.string)))
+      }
+    }
     if let migration = prepared.migration {
       try require(context, capability: "schemas.migrate", scope: migration.collection)
-      try requireNoDataDependents(migration.collection, excludingApp: prepared.appID)
+      try requireNoDataDependents(migration.collection, excludingApps: participants)
       guard
         Self.digest(try collectionSnapshot(migration.collection).encoded()) == migration.baseDigest
       else {
@@ -270,17 +306,11 @@ extension Kernel {
         || (!hasExits && !labels.isUntrusted
           && !prepared.interface.data.keys.contains(where: privateCollections.contains))
     else { throw HostError("needs_confirmation", "New capabilities require host approval") }
-    let migrationBackup = prepared.migration != nil ? try backupData() : nil
-    let destination = root.appendingPathComponent(
-      "apps/\(prepared.appID)/versions/\(prepared.version)")
-    guard !FileManager.default.fileExists(atPath: destination.path) else {
-      throw HostError("conflict", "Immutable version already exists")
-    }
-    try FileManager.default.createDirectory(
-      at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
-    try FileManager.default.moveItem(at: prepared.directory, to: destination)
-    var activated = false
-    defer { if !activated { try? FileManager.default.removeItem(at: destination) } }
+  }
+
+  func installPackage(_ prepared: PreparedPackage, context: RequestContext) throws {
+    let source = try sourceDirectory(prepared.appID)
+    let labels = try self.labels(for: context)
     try Self.git(["add", "--all"], directory: source)
     try Self.git(
       [
@@ -289,15 +319,6 @@ extension Kernel {
       ], directory: source)
     try db.transaction {
       try labelPackage(prepared.appID, with: labels)
-      if let migration = prepared.migration {
-        try installDataChange(migration, context: context)
-        try audit(
-          "data.migrated", context: context,
-          detail: [
-            "app": .string(prepared.appID),
-            "backup": migrationBackup.map(Value.string) ?? .null, "change": migration.summary,
-          ])
-      }
       try db.execute(
         "UPDATE packages SET version=?,manifest=?,interface=? WHERE id=?",
         [
@@ -345,7 +366,6 @@ extension Kernel {
         "app.activated", context: context,
         detail: ["id": .string(prepared.appID), "version": .string(prepared.version)])
     }
-    activated = true
   }
   private func appVersionCount(_ id: String) throws -> Int {
     try db.query("SELECT COUNT(*) AS n FROM app_versions WHERE app_id=?", [.string(id)]).first?[

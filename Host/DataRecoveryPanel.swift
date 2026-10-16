@@ -3,6 +3,17 @@ import SwiftUI
 
 struct DataRecoveryPanel: View {
   let model: AppModel
+  var body: some View {
+    TabView {
+      CollectionRecoveryPanel(model: model).tabItem { Text("集合恢复") }
+      GroupRecoveryPanel(model: model).tabItem { Text("分组恢复") }
+      JointUpdatePanel(model: model).tabItem { Text("联合更新") }
+    }.frame(width: 720, height: 620)
+  }
+}
+
+struct CollectionRecoveryPanel: View {
+  let model: AppModel
   @Environment(\.dismiss) private var dismiss
   @State private var collections: [String] = []
   @State private var backups: [Value] = []
