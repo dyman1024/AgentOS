@@ -13,10 +13,14 @@ import Foundation
       do {
         try await run()
         print(
-          "PASS: VM isolation and "
-            + (ProcessInfo.processInfo.environment["VM_COLD_RESTORE"] == "1"
-              ? "cold disk checkpoint (memory restoration not tested)"
-              : "memory snapshot integration"))
+          CommandLine.arguments.contains("--restore-only")
+            ? "PASS: fresh host restores disk and process memory"
+            : ProcessInfo.processInfo.environment["VM_EXPECT_LOCKED_RESTORE_FAILURE"] == "1"
+              ? "PASS: locked restore rejected and latest disk preserved"
+              : "PASS: VM isolation and "
+                + (ProcessInfo.processInfo.environment["VM_COLD_RESTORE"] == "1"
+                  ? "cold disk checkpoint (memory restoration not tested)"
+                  : "memory snapshot integration"))
         exit(0)
       } catch {
         fputs("FAIL: \(error)\n", stderr)
@@ -30,15 +34,15 @@ import Foundation
     print("✓ " + message)
   }
   @MainActor static func run() async throws {
-    if CommandLine.arguments.count == 3, CommandLine.arguments[1] == "--restore-only" {
+    if CommandLine.arguments.count == 4, CommandLine.arguments[1] == "--restore-only" {
       let directory = URL(fileURLWithPath: CommandLine.arguments[2])
-      let vm = WorkbenchVM(directory: URL(fileURLWithPath: CommandLine.arguments[2]))
-      let id = try FileManager.default.contentsOfDirectory(
-        atPath: directory.appendingPathComponent("snapshots").path
-      ).first!
-      try await vm.restore(id)
+      let vm = WorkbenchVM(directory: directory)
+      try await vm.restore(CommandLine.arguments[3])
       let restored = try await vm.execute("fs.read", args: ["path": "snapshot.txt"])
       try check(restored["text"] == "before", "snapshot restored in a fresh process")
+      let expected = try Value.parse(
+        String(contentsOf: directory.appendingPathComponent("memory-check.json"), encoding: .utf8))
+      try await verifyMemory(vm, expected: expected)
       try await vm.stop()
       return
     }
@@ -130,16 +134,132 @@ import Foundation
     try check(
       !FileManager.default.fileExists(atPath: ephemeral.directory.path),
       "temporary VM disk is removed after execution")
+    try await snapshotChecks(vm)
+    try await kernel.shutdown()
+  }
+  @MainActor static func memory(_ vm: WorkbenchVM, method: String, args: Value = [:]) async throws
+    -> Value
+  {
+    try await vm.execute(
+      "backend.invoke", args: ["method": .string(method), "args": args])
+  }
+  @MainActor static func verifyMemory(_ vm: WorkbenchVM, expected: Value) async throws {
+    let actual = try await memory(vm, method: "read")
+    try check(
+      actual == expected,
+      "heap counter, random nonce, PID and boot ID resume without a cold boot")
+    let next = try await memory(vm, method: "increment")
+    try check(next["counter"] == 42, "restored process continues from its saved heap value")
+    try await vm.suspend()
+    try check(
+      vm.running, "restored processes are not automatically suspended by host idle handling")
+  }
+  @MainActor static func snapshotChecks(_ vm: WorkbenchVM) async throws {
+    let source = """
+      import json, os, sys, uuid
+      counter = 0
+      nonce = str(uuid.uuid4())
+      boot = open('/proc/sys/kernel/random/boot_id').read().strip()
+      for line in sys.stdin:
+          request = json.loads(line)
+          if request['method'] == 'set': counter = request['args']['counter']
+          if request['method'] == 'increment': counter += 1
+          print(json.dumps({'id': request['id'], 'result': {
+              'counter': counter, 'nonce': nonce, 'pid': os.getpid(), 'boot': boot
+          }}), flush=True)
+      """
+    _ = try await vm.execute("fs.write", args: ["path": "memory.py", "text": .string(source)])
+    _ = try await vm.execute(
+      "backend.start", args: ["language": "python", "entry": "memory.py"])
+    let expected = try await memory(vm, method: "set", args: ["counter": 41])
+    try expected.encoded().write(to: vm.directory.appendingPathComponent("memory-check.json"))
     _ = try await vm.execute("fs.write", args: ["path": "snapshot.txt", "text": "before"])
     let snapshot = UUID().uuidString
-    _ = try await vm.snapshot(snapshot)
+    let saving = Task { @MainActor in try await vm.snapshot(snapshot) }
+    await Task.yield()
+    try check(vm.stats()["checkpointing"] == true, "snapshot owns the VM across suspension points")
+    do {
+      _ = try await vm.execute("fs.write", args: ["path": "racing.txt", "text": "bad"])
+      throw HostError("test_failed", "Write raced a snapshot")
+    } catch let error as HostError where error.code == "conflict" {}
+    do {
+      try await vm.stop()
+      throw HostError("test_failed", "Stop raced a snapshot")
+    } catch let error as HostError where error.code == "conflict" {}
+    _ = try await saving.value
+    try check(vm.stats()["checkpointing"] == false, "snapshot releases its lifecycle guard")
     _ = try await vm.execute("fs.write", args: ["path": "snapshot.txt", "text": "after"])
-    try await vm.restore(
-      snapshot, cold: ProcessInfo.processInfo.environment["VM_COLD_RESTORE"] == "1")
+    let changed = try await memory(vm, method: "set", args: ["counter": 99])
+    try check(changed["counter"] == 99, "live heap changes after snapshot")
+    try await vm.suspend()
+    try check(!vm.running, "restore also accepts an idle-paused workbench")
+    let cold = ProcessInfo.processInfo.environment["VM_COLD_RESTORE"] == "1"
+    if ProcessInfo.processInfo.environment["VM_EXPECT_LOCKED_RESTORE_FAILURE"] == "1" {
+      do {
+        try await vm.restore(snapshot)
+        throw HostError("test_failed", "Expected locked-session failure; verify session state")
+      } catch let error as HostError where error.code == "vm_restore_failed" {
+        try check(
+          error.details["domain"] == "VZErrorDomain" && error.details["code"] == 12
+            && error.details["reason"]?.string?.contains("permission denied") == true
+            && error.details["diskRestored"] == true,
+          "locked restore surfaces VZ permission denial and successful disk rollback")
+      }
+      try check(!vm.running, "locked memory restore never silently cold boots")
+      let latest = try await vm.execute("fs.read", args: ["path": "snapshot.txt"])
+      try check(latest["text"] == "after", "locked restore preserves acknowledged writes")
+      try await vm.stop()
+      return
+    }
+    try await vm.restore(snapshot, cold: cold)
     let restored = try await vm.execute("fs.read", args: ["path": "snapshot.txt"])
-    try check(restored["text"] == "before", "disk and machine snapshot restore prior state")
+    try check(restored["text"] == "before", "snapshot restores disk contents")
+    if cold {
+      let boot = try await vm.execute("exec", args: ["cmd": "cat /proc/sys/kernel/random/boot_id"])
+      try check(
+        boot["stdout"]?.string?.trimmingCharacters(in: .whitespacesAndNewlines)
+          != expected["boot"]?.string,
+        "explicit cold restore has a new boot ID and makes no memory continuity claim")
+      try await vm.stop()
+      return
+    }
+    try await verifyMemory(vm, expected: expected)
+    let forged = try await vm.execute(
+      "exec",
+      args: ["cmd": "AOS_RUN_TOKEN=forged aos net.fetch '{\"url\":\"https://example.com\"}'"])
+    try check(
+      forged["stdout"]!.string!.contains("denied"), "restoration still rejects forged host tokens")
+    // A damaged encrypted state must not roll the user's disk back or silently cold boot.
+    _ = try await vm.execute("fs.write", args: ["path": "snapshot.txt", "text": "latest"])
+    let state = vm.directory.appendingPathComponent("snapshots/" + snapshot + "/state")
+    let valid = state.appendingPathExtension("valid")
+    try FileManager.default.moveItem(at: state, to: valid)
+    try Data("invalid-state".utf8).write(to: state)
+    do {
+      try await vm.restore(snapshot)
+      throw HostError("test_failed", "Corrupt snapshot accepted")
+    } catch let error as HostError where error.code == "vm_restore_failed" {
+      try check(error.details["diskRestored"] == true, "failed restore reports disk rollback")
+    }
+    try check(!vm.running, "failed memory restore never silently cold boots")
+    let latest = try await vm.execute("fs.read", args: ["path": "snapshot.txt"])
+    try check(latest["text"] == "latest", "failed memory restore preserves the latest disk")
     try await vm.stop()
-    try await kernel.shutdown()
+    try FileManager.default.removeItem(at: state)
+    try FileManager.default.moveItem(at: valid, to: state)
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: CommandLine.arguments[0])
+    process.arguments = ["--restore-only", vm.directory.path, snapshot]
+    try process.run()
+    let timeout = Task { @MainActor in
+      try await Task.sleep(for: .seconds(60))
+      if process.isRunning { process.terminate() }
+    }
+    await Task.detached { process.waitUntilExit() }.value
+    timeout.cancel()
+    try check(
+      process.terminationStatus == 0,
+      "new host process restores heap and disk from the same checkpoint")
   }
   @MainActor static func imageChecks(_ vm: WorkbenchVM) async throws {
     func artifact(_ file: URL) throws -> Value {

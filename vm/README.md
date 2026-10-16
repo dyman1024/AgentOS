@@ -32,7 +32,22 @@ VM_COLD_RESTORE=1 VM_OCI_ARCHIVE="$PWD/.workbench-cache/backend.oci.tar" \
 
 `AGENTOS_TEST_KERNEL` 指向开发者选择的内核。测试需要公网 example.com，仅验证经宿主许可的 HTTPS。`VM_SKIP_NETWORK=1` 可跳过真实出站，但该运行不能计作完整 S7 通过。每次 Swift 重编译后需重新签名 VMChecks。
 
-测试覆盖直接 socket 拒绝、伪造令牌、域名授权、Node/OCI 契约隔离、持久进程、撤权、临时磁盘清理与冷磁盘恢复。去掉 `VM_COLD_RESTORE=1` 会测试完整内存恢复；本机该项返回 VZErrorDomain Code 12，不能报告通过。独立复现入口是 `scripts/vm-snapshot-check.swift`。
+测试覆盖直接 socket 拒绝、伪造令牌、域名授权、Node/OCI 契约隔离、持久进程、撤权、临时磁盘清理与冷磁盘恢复。去掉 `VM_COLD_RESTORE=1` 会验证完整内存恢复：将堆计数器从 41 改为 99，再恢复到 41，随后继续运行到 42；随机值、PID 与 boot ID 必须一致，并在新的宿主进程中重验。同轮还验证损坏状态文件不会丢失当前磁盘的最近写入，也不会自动冷启动。
+
+本机 macOS 26.5.1 / M5 Pro 解锁时完整恢复通过；锁屏时 ad-hoc 与 Apple Development 均返回 `VZErrorDomain Code 12`，系统日志定位至 Secure Enclave 解密 `-25308`。开发者证书不是这项能力的必要条件。请在原 Mac、原用户下解锁后重试；不要修改锁屏、钥匙串或系统安全设置来绕过限制。详见[诊断证据](../docs/verification/2026-10-16-vm-memory.md)。
+
+独立最小复现（只验证框架保存/恢复，不代替上述堆状态验收）：
+
+```bash
+swiftc scripts/vm-snapshot-check.swift -o .workbench-cache/vm-snapshot-check
+codesign --force --sign - --entitlements Config/Virtualization.entitlements .workbench-cache/vm-snapshot-check
+.workbench-cache/vm-snapshot-check "$AGENTOS_TEST_KERNEL" .workbench-cache/workbench.ext4
+# 可加 --same-instance，或 --vsock；输出标明失败发生在哪个阶段。
+```
+
+在已确认锁屏的测试会话中可设置 `VM_EXPECT_LOCKED_RESTORE_FAILURE=1`，它严格要求出现 permission denied，并验证原磁盘最近写入被保留；如果恢复成功，该负向用例反而失败。不要把此模式作为日常内存验收或 CI 的跳过开关。
+
+内存恢复后的工作间不自动闲置暂停，以保留新宿主尚未登记的常驻进程；显式停止或冷启动后恢复原闲置策略。快照仅在全部文件保存完成后可见。恢复失败返回 `vm_restore_failed`，包含底层错误域/码和磁盘回退状态；磁盘回退自身失败返回 `vm_restore_rollback_failed` 并保留备份文件。
 
 ## Node/Python 后端
 

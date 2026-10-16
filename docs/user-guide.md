@@ -69,7 +69,7 @@ build/Build/Products/Debug/AgentOS.app/Contents/Resources/engine/aos call notes.
 
 ## 7. 已知限制
 
-完整 VM 内存恢复在当前机器失败；显式冷磁盘恢复已通过。WASM 仅 core module v1；原生使用固定 swiftc；自动化仅固定工具序列。独立 `.app`/HTML 分享仍属于后续可选产物。联合 schema 更新和按应用/运行的数据恢复已实现，冲突时停止并要求重新预览。付费评测、账户接入、桌面验收与正式发行条件见 [验收记录](verification/2026-10-16-rebuild.md)。
+完整 VM 内存恢复已在当前机器解锁状态下通过，支持恢复常驻进程的堆状态；锁屏时系统可能拒绝解密，请在创建快照的 Mac 和用户下解锁重试。失败会保留当前磁盘，不自动冷启动；只有显式 `cold: true` 才执行磁盘恢复。详见[诊断记录](verification/2026-10-16-vm-memory.md)。WASM 仅 core module v1；原生使用固定 swiftc；自动化仅固定工具序列。独立 `.app`/HTML 分享仍属于后续可选产物。联合 schema 更新和按应用/运行的数据恢复已实现，冲突时停止并要求重新预览。付费评测、账户接入、桌面验收与正式发行条件见 [验收记录](verification/2026-10-16-rebuild.md)。
 
 
 ## 8. 联合更新与分组恢复

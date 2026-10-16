@@ -13,6 +13,8 @@ public final class WorkbenchVM: NSObject, @MainActor VZVirtualMachineDelegate,
   private var activeToken: String?
   private var busy = false
   private var starting = false
+  private var checkpointing = false
+  private var restoredMemory = false
   private var connections: [UUID: VZVirtioSocketConnection] = [:]
   private var console: Pipe?
   public var onHostRequest: ((String, Value) async throws -> Value)?
@@ -21,7 +23,7 @@ public final class WorkbenchVM: NSObject, @MainActor VZVirtualMachineDelegate,
   }
   public var running: Bool { machine?.state == .running }
   public func install(kernel: URL, image: URL) throws {
-    guard machine == nil else {
+    guard machine == nil, !checkpointing else {
       throw HostError("conflict", "Stop the workbench before changing its image")
     }
     let fm = FileManager.default
@@ -64,10 +66,17 @@ public final class WorkbenchVM: NSObject, @MainActor VZVirtualMachineDelegate,
     try FileManager.default.removeItem(at: directory)
   }
   public func suspend() async throws {
-    guard !busy, !starting, let machine, machine.state == .running else { return }
+    // Restored processes may include services unknown to the new host process.
+    guard !busy, !starting, !checkpointing, !restoredMemory, let machine,
+      machine.state == .running
+    else { return }
     try await machine.pause()
   }
   public func start() async throws {
+    guard !checkpointing else { throw HostError("conflict", "Workbench checkpoint is in progress") }
+    try await boot()
+  }
+  private func boot() async throws {
     if running { return }
     if let machine, machine.state == .paused {
       try await machine.resume()
@@ -90,7 +99,7 @@ public final class WorkbenchVM: NSObject, @MainActor VZVirtualMachineDelegate,
       }
       throw HostError("timeout", "Workbench did not become ready")
     } catch {
-      try? await stop()
+      try? await stopMachine()
       throw error
     }
   }
@@ -139,6 +148,7 @@ public final class WorkbenchVM: NSObject, @MainActor VZVirtualMachineDelegate,
     try configuration.validateSaveRestoreSupport()
     let vm = VZVirtualMachine(configuration: configuration)
     machine = vm
+    restoredMemory = false
     vm.delegate = self
     let listener = VZVirtioSocketListener()
     listener.delegate = self
@@ -147,9 +157,14 @@ public final class WorkbenchVM: NSObject, @MainActor VZVirtualMachineDelegate,
     return vm
   }
   public func stop() async throws {
+    guard !checkpointing else { throw HostError("conflict", "Workbench checkpoint is in progress") }
+    try await stopMachine()
+  }
+  private func stopMachine() async throws {
     activeToken = nil
     if let machine, machine.state != .stopped { try await machine.stop() }
     machine = nil
+    restoredMemory = false
     listener = nil
     console?.fileHandleForReading.readabilityHandler = nil
     console = nil
@@ -272,61 +287,104 @@ public final class WorkbenchVM: NSObject, @MainActor VZVirtualMachineDelegate,
       "installed": .bool(
         FileManager.default.fileExists(atPath: directory.appendingPathComponent("disk.ext4").path)),
       "running": .bool(running), "busy": .bool(busy), "memoryMiB": 1024, "cpuCount": 2,
+      "checkpointing": .bool(checkpointing), "restoredMemory": .bool(restoredMemory),
       "networkInterfaces": 0, "hostDirectoryShares": 0,
     ]
   }
   public func snapshot(_ name: String) async throws -> Value {
-    guard running, !busy, let machine, UUID(uuidString: name) != nil else {
+    guard running, !busy, !starting, !checkpointing, let machine, UUID(uuidString: name) != nil
+    else {
       throw HostError("conflict", "Use a UUID snapshot name while workbench is idle")
     }
     let folder = directory.appendingPathComponent("snapshots/" + name)
     guard !FileManager.default.fileExists(atPath: folder.path) else {
       throw HostError("conflict", "Snapshot already exists")
     }
-    try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-    _ = try await rpc("exec", args: ["cmd": "sync"])
-    try await machine.pause()
+    checkpointing = true
+    defer { checkpointing = false }
+    let staging = folder.deletingLastPathComponent().appendingPathComponent(".pending-" + name)
+    try FileManager.default.createDirectory(
+      at: staging, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+    defer { try? FileManager.default.removeItem(at: staging) }
     do {
-      try await machine.saveMachineStateTo(url: folder.appendingPathComponent("state"))
+      let sync = try await rpc("exec", args: ["cmd": "sync"])
+      guard sync["exitCode"] == 0 else { throw HostError("vm_error", "Guest disk sync failed") }
+      try await machine.pause()
+      try await machine.saveMachineStateTo(url: staging.appendingPathComponent("state"))
       try FileManager.default.copyItem(
         at: directory.appendingPathComponent("disk.ext4"),
-        to: folder.appendingPathComponent("disk.ext4"))
+        to: staging.appendingPathComponent("disk.ext4"))
       try await machine.resume()
+      try FileManager.default.moveItem(at: staging, to: folder)
       return ["id": .string(name)]
     } catch {
-      try? await machine.resume()
+      if machine.state == .paused { try? await machine.resume() }
       throw error
     }
   }
   public func restore(_ name: String, cold: Bool = false) async throws {
-    guard !busy, UUID(uuidString: name) != nil else {
+    guard !busy, !starting, !checkpointing, UUID(uuidString: name) != nil else {
       throw HostError("conflict", "Workbench is busy or snapshot ID is invalid")
     }
     let folder = directory.appendingPathComponent("snapshots/" + name)
-    guard FileManager.default.fileExists(atPath: folder.appendingPathComponent("state").path) else {
+    let fm = FileManager.default
+    guard fm.fileExists(atPath: folder.appendingPathComponent("state").path),
+      fm.fileExists(atPath: folder.appendingPathComponent("disk.ext4").path)
+    else {
       throw HostError("not_found", "Snapshot is missing")
     }
-    try await stop()
+    checkpointing = true
+    defer { checkpointing = false }
     let disk = directory.appendingPathComponent("disk.ext4")
     let backup = directory.appendingPathComponent("before-restore-" + UUID().uuidString + ".ext4")
-    try FileManager.default.copyItem(at: disk, to: backup)
+    let stagedDisk = directory.appendingPathComponent("restore-" + UUID().uuidString + ".ext4")
+    defer { try? fm.removeItem(at: stagedDisk) }
+    // Copy the checkpoint before stopping or moving the current disk.
+    try fm.copyItem(at: folder.appendingPathComponent("disk.ext4"), to: stagedDisk)
+    // A failed restore must preserve acknowledged writes, including Linux's dirty page cache.
+    let wasPaused = machine?.state == .paused
+    if wasPaused { try await machine!.resume() }
+    if running {
+      do {
+        let sync = try await rpc("exec", args: ["cmd": "sync"])
+        guard sync["exitCode"] == 0 else { throw HostError("vm_error", "Guest disk sync failed") }
+      } catch {
+        if wasPaused { try? await machine?.pause() }
+        throw error
+      }
+    }
+    try await stopMachine()
+    try fm.moveItem(at: disk, to: backup)
     do {
-      try FileManager.default.removeItem(at: disk)
-      try FileManager.default.copyItem(at: folder.appendingPathComponent("disk.ext4"), to: disk)
+      try fm.moveItem(at: stagedDisk, to: disk)
       if cold {
-        try await start()
+        try await boot()
       } else {
         _ = try prepareMachine()
         try await machine!.restoreMachineStateFrom(url: folder.appendingPathComponent("state"))
         try await machine!.resume()
+        restoredMemory = true
       }
-      try FileManager.default.removeItem(at: backup)
     } catch {
-      try? await stop()
-      try? FileManager.default.removeItem(at: disk)
-      try? FileManager.default.moveItem(at: backup, to: disk)
-      throw error
+      let original = error as NSError
+      do {
+        try await stopMachine()
+        if fm.fileExists(atPath: disk.path) { try fm.removeItem(at: disk) }
+        try fm.moveItem(at: backup, to: disk)
+      } catch {
+        throw HostError(
+          "vm_restore_rollback_failed", "恢复失败，原磁盘保留在备份文件中；请停止操作并检查工作间目录。",
+          details: ["backup": .string(backup.lastPathComponent), "diskRestored": false])
+      }
+      throw HostError(
+        "vm_restore_failed",
+        "工作间恢复失败，原磁盘已保留，VM 已停止。请在创建快照的 Mac 和用户下解锁后重试；若仍失败，请检查系统版本、配置及 Virtualization 日志。冷磁盘恢复需显式选择。",
+        details: [
+          "domain": .string(original.domain), "code": .number(Double(original.code)),
+          "reason": .string(original.localizedDescription), "diskRestored": true,
+        ])
     }
+    try? fm.removeItem(at: backup)
   }
   public func guestDidStop(_ virtualMachine: VZVirtualMachine) { activeToken = nil }
   public func virtualMachine(_ virtualMachine: VZVirtualMachine, didStopWithError error: Error) {

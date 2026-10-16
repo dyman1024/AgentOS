@@ -1,0 +1,170 @@
+VM memory diagnosis — 2026-10-16
+Environment: macOS 26.5.1 (25F80), Apple M5 Pro, Xcode 26.6 (17F113)
+Only local fixtures; no model calls or service accounts.
+
+Original binary rerun
+PASS: minimal snapshot; vsock=false
+
+Unlocked signing matrix
+SIGN adhoc 0
+CASE adhoc [] 2026-10-16T11:44:40+0800
+stage=start
+stage=pause
+stage=save
+stage=saved bytes=23072768
+stage=restore state=0
+stage=resume
+PASS: minimal snapshot; vsock=false
+ EXIT 0
+CASE adhoc ['--same-instance'] 2026-10-16T11:44:44+0800
+stage=start
+stage=pause
+stage=save
+stage=saved bytes=23072768
+stage=restore state=0
+stage=resume
+PASS: minimal snapshot; vsock=false
+ EXIT 0
+CASE adhoc ['--vsock'] 2026-10-16T11:44:46+0800
+stage=start
+stage=pause
+stage=save
+stage=saved bytes=23072768
+stage=restore state=0
+stage=resume
+PASS: minimal snapshot; vsock=true
+ EXIT 0
+SIGN development 0
+CASE development [] 2026-10-16T11:44:48+0800
+stage=start
+stage=pause
+stage=save
+stage=saved bytes=23072768
+stage=restore state=0
+stage=resume
+PASS: minimal snapshot; vsock=false
+ EXIT 0
+CASE development ['--same-instance'] 2026-10-16T11:44:52+0800
+stage=start
+stage=pause
+stage=save
+stage=saved bytes=23072768
+stage=restore state=0
+stage=resume
+PASS: minimal snapshot; vsock=false
+ EXIT 0
+CASE development ['--vsock'] 2026-10-16T11:44:54+0800
+stage=start
+stage=pause
+stage=save
+stage=saved bytes=23072768
+stage=restore state=0
+stage=resume
+PASS: minimal snapshot; vsock=true
+ EXIT 0
+
+Locked signing matrix
+CASE locked adhoc 2026-10-16T11:50:43+0800
+stage=start
+stage=pause
+stage=save
+stage=saved bytes=23072768
+stage=restore state=0
+FAIL: Error Domain=VZErrorDomain Code=12 "The virtual machine failed to restore with error “permission denied”." UserInfo={NSLocalizedFailure=An error occurred while restoring the virtual machine., NSLocalizedFailureReason=The virtual machine failed to restore with error “permission denied”.}
+ EXIT 1
+CASE locked development 2026-10-16T11:50:46+0800
+stage=start
+stage=pause
+stage=save
+stage=saved bytes=23072768
+stage=restore state=0
+FAIL: Error Domain=VZErrorDomain Code=12 "The virtual machine failed to restore with error “permission denied”." UserInfo={NSLocalizedFailure=An error occurred while restoring the virtual machine., NSLocalizedFailureReason=The virtual machine failed to restore with error “permission denied”.}
+ EXIT 1
+
+System log excerpt (key identifier and process identifiers removed):
+2026-10-16 11:50:05.311 E  com.apple.Virtualization.VirtualMachine[redacted] [com.apple.security:seckey] SecKeyCreateDecryptedDataWithParameters failed: Error Domain=NSOSStatusErrorDomain Code=-25308 "<redacted-key>: unable to compute shared secret" UserInfo={NSDebugDescription=<redacted-key>: unable to compute shared secret, AKSError=-536870174}
+2026-10-16 11:50:46.286 E  com.apple.Virtualization.VirtualMachine[redacted] [com.apple.security:seckey] SecKeyCreateDecryptedDataWithParameters failed: Error Domain=NSOSStatusErrorDomain Code=-25308 "<redacted-key>: unable to compute shared secret" UserInfo={NSDebugDescription=<redacted-key>: unable to compute shared secret, AKSError=-536870174}
+2026-10-16 11:50:48.653 E  com.apple.Virtualization.VirtualMachine[redacted] [com.apple.security:seckey] SecKeyCreateDecryptedDataWithParameters failed: Error Domain=NSOSStatusErrorDomain Code=-25308 "<redacted-key>: unable to compute shared secret" UserInfo={NSDebugDescription=<redacted-key>: unable to compute shared secret, AKSError=-536870174}
+
+security error -25308: User interaction is not allowed.
+
+Unlocked integration excerpt captured before the final idle-paused entry assertion and lifecycle flag reset:
+✓ snapshot restores disk contents
+✓ heap counter, random nonce, PID and boot ID resume without a cold boot
+✓ restored process continues from its saved heap value
+✓ restored processes are not automatically suspended by host idle handling
+✓ failed restore reports disk rollback
+✓ failed memory restore never silently cold boots
+✓ failed memory restore preserves the latest disk
+✓ snapshot restored in a fresh process
+✓ heap counter, random nonce, PID and boot ID resume without a cold boot
+✓ restored process continues from its saved heap value
+✓ new host process restores heap and disk from the same checkpoint
+PASS: VM isolation and memory snapshot integration
+
+Final cold restore run
+VM ready
+Guest status: {"networkInterfaces":["teql0","gre0","ip6gre0","lo","bond0","ip6_vti0","gretap0","tunl0","erspan0","dummy0","sit0","ip6tnl0","ip_vti0","bonding_masters"],"ready":true}
+✓ guest has no hardware network device; kernel virtual interfaces have no host uplink
+✓ Python, Node and shell execute over vsock
+✓ direct outbound socket cannot bypass host policy
+✓ vsock egress rejects domains without a grant
+✓ forged command token is rejected
+✓ authorized HTTPS egress goes through host gateway
+✓ background service starts
+✓ background service survives individual command completion
+✓ backendcheck: contracts run in a disposable VM; live state begins clean
+✓ backendcheck: backend process persists across tool calls without an open UI
+✓ backend output retains conservative private and external-source labels
+✓ backend grant revocation takes effect before dispatch
+✓ ocicheck: contracts run in a disposable VM; live state begins clean
+✓ ocicheck: backend process persists across tool calls without an open UI
+✓ backend output retains conservative private and external-source labels
+✓ backend grant revocation takes effect before dispatch
+✓ signed base image update selects a separate immutable image
+✓ base image update preserves the running persistent guest disk
+✓ base image version replay or downgrade is rejected
+✓ temporary VM boots from clean base without host folders
+✓ temporary VM disk is removed after execution
+✓ snapshot owns the VM across suspension points
+✓ snapshot releases its lifecycle guard
+✓ live heap changes after snapshot
+✓ restore also accepts an idle-paused workbench
+✓ snapshot restores disk contents
+✓ explicit cold restore has a new boot ID and makes no memory continuity claim
+PASS: VM isolation and cold disk checkpoint (memory restoration not tested)
+
+Final locked negative run
+VM ready
+Guest status: {"networkInterfaces":["teql0","gre0","ip6gre0","lo","bond0","ip6_vti0","gretap0","tunl0","erspan0","dummy0","sit0","ip6tnl0","ip_vti0","bonding_masters"],"ready":true}
+✓ guest has no hardware network device; kernel virtual interfaces have no host uplink
+✓ Python, Node and shell execute over vsock
+✓ direct outbound socket cannot bypass host policy
+✓ vsock egress rejects domains without a grant
+✓ forged command token is rejected
+✓ authorized HTTPS egress goes through host gateway
+✓ background service starts
+✓ background service survives individual command completion
+✓ backendcheck: contracts run in a disposable VM; live state begins clean
+✓ backendcheck: backend process persists across tool calls without an open UI
+✓ backend output retains conservative private and external-source labels
+✓ backend grant revocation takes effect before dispatch
+✓ ocicheck: contracts run in a disposable VM; live state begins clean
+✓ ocicheck: backend process persists across tool calls without an open UI
+✓ backend output retains conservative private and external-source labels
+✓ backend grant revocation takes effect before dispatch
+✓ signed base image update selects a separate immutable image
+✓ base image update preserves the running persistent guest disk
+✓ base image version replay or downgrade is rejected
+✓ temporary VM boots from clean base without host folders
+✓ temporary VM disk is removed after execution
+✓ snapshot owns the VM across suspension points
+✓ snapshot releases its lifecycle guard
+✓ live heap changes after snapshot
+✓ restore also accepts an idle-paused workbench
+✓ locked restore surfaces VZ permission denial and successful disk rollback
+✓ locked memory restore never silently cold boots
+✓ locked restore preserves acknowledged writes
+PASS: locked restore rejected and latest disk preserved
+
+Deterministic checks: make check exited 0; all 64 local Swift cases executed; WebKit/runtime, native sandbox, 4 OCI cases, TypeScript, Bun RPC and Debug build passed.

@@ -46,7 +46,7 @@
 | 控制通道 | 有界 JSON RPC 经 vsock；命令短期令牌绑定宿主运行，命令结束即失效 |
 | 文件 | 不共享宿主目录。通过授权文件服务显式复制 ≤1 MB UTF-8；OCI 归档单独有界传输 |
 | 网络 | 无网卡；`aos net.fetch` 显式请求宿主域名授权与出口策略，不实现透明 TCP/IP 网络栈 |
-| 快照 | 保存磁盘与内存状态；本机内存恢复失败，冷磁盘恢复通过且必须显式指定 |
+| 快照 | 保存磁盘与内存状态；本机解锁时完整恢复通过，锁屏时解密受限；冷恢复必须显式指定 |
 | 更新 | 新基础镜像不可变存储，原子更新选择指针；已有磁盘保留，新实例使用新基础镜像 |
 | 资源 | 命令 ≤120 秒、输出 ≤2 MB；后端单次 ≤20 秒、回复 ≤1 MB；闲置暂停，临时磁盘执行后清理 |
 
@@ -101,6 +101,32 @@ P3 之前先做 S7（[11](11-engineering.md) 第 8 节）：验证不配直通�
 
 持久工作间、临时干净工作间、文件操作、进程服务、日志、空闲暂停和磁盘快照已实现。`vm.copyIn/copyOut` 通过授权文件夹服务复制不超过 1 MB 的 UTF-8 文件；没有默认共享。后台服务不继承一次命令的宿主令牌。每应用后端已接入 IDL 工具：Node/Python 源码，或 linux/arm64 OCI image-layout tar。OCI 在来宾内用 umoci/runc 验证并解包，保留标准启动参数，`/data` 映射来宾私有持久目录。契约测试另建干净 VM，正式后端不会继承测试状态。
 
-本机实测 Python/Node 执行、直接 socket 被阻断、未授权域名/伪造令牌拒绝、经授权宿主 HTTPS、服务继续运行、临时工作间清理和冷启动磁盘恢复通过。完整内存状态恢复在本机返回 `VZErrorDomain Code 12`，独立最小复现也失败；保留明确的 `cold: true` 磁盘恢复选项，不静默伪装为内存恢复。签名清单、受限 HTTPS 下载、文件完整性验证和基础镜像更新代码已实现；发行镜像来源、托管地址和公钥尚未配置。`vm/build-image.sh` 是开发构建器，实际使用的 LinuxKit 内核仅作本机验证，不等于已确定再分发方案。见 [VM 说明](../../vm/README.md)。
+本机实测 Python/Node 执行、直接 socket 被阻断、未授权域名/伪造令牌拒绝、经授权宿主 HTTPS、服务继续运行、临时工作间清理和冷启动磁盘恢复通过。完整内存恢复已在本机解锁状态下通过，包括新宿主进程恢复来宾的堆变量、随机值、PID 和启动 ID。原 `VZErrorDomain Code 12` 已定位到锁屏状态下的 Secure Enclave 解密限制：ad-hoc 与 Apple Development 均在解锁时成功、锁屏时失败，不需要把开发者证书作为这项能力的前置条件。保留明确的 `cold: true` 磁盘恢复选项，不自动降级。证据与复现见[内存恢复诊断](../verification/2026-10-16-vm-memory.md)。签名清单、受限 HTTPS 下载、文件完整性验证和基础镜像更新代码已实现；发行镜像来源、托管地址和公钥尚未配置。`vm/build-image.sh` 是开发构建器，实际使用的 LinuxKit 内核仅作本机验证，不等于已确定再分发方案。见 [VM 说明](../../vm/README.md)。
 
 OCI 布局和描述符按 [OCI Image Layout](https://github.com/opencontainers/image-spec/blob/main/image-layout.md) 校验，解包使用 [umoci 官方流程](https://github.com/opencontainers/umoci)。当前 profile 限定单一 `app` 标签、SHA-256 和普通/gzip 层，不接受未在包内提供的外部 blob。
+
+
+### 快照与恢复的失败边界
+
+以下流程区分内存恢复与显式冷恢复，并保护恢复前已确认的写入。
+
+```mermaid
+flowchart TD
+  Request[恢复请求] --> Guard[独占工作间生命周期]
+  Guard --> Stage[复制快照磁盘到临时文件]
+  Stage --> Sync[恢复暂停的来宾并同步当前磁盘]
+  Sync --> Backup[停止 VM 并保留当前磁盘]
+  Backup --> Restore{恢复模式}
+  Restore -->|默认| Memory[解密内存状态并继续进程]
+  Restore -->|显式 cold true| Cold[从快照磁盘重新启动]
+  Memory -->|失败| Rollback[还原当前磁盘并返回错误]
+  Memory -->|成功| Done[释放独占状态]
+  Cold -->|成功| Done
+  Cold -->|失败| Rollback
+```
+
+- 快照和恢复持有 `checkpointing`，异步等待期间拒绝新的命令、启动、停止或其他快照操作。快照在临时目录中生成，完成后才发布。
+- 恢复前同步当前来宾，避免恢复失败后的磁盘回退丢失 Linux 页缓存中的最近写入。损坏状态文件已做真实故障注入。
+- 内存恢复失败保留原磁盘，VM 保持停止，并返回底层错误域/错误码；不会自行冷启动。磁盘回退自身失败则保留 `before-restore-*.ext4` 并明确要求人工检查。
+- 内存恢复后的进程可能不在新宿主的服务登记表中，因此该 VM 暂停自动闲置回收，直到显式停止或冷启动。`vm.stats.restoredMemory` 表示此状态。
+- Apple 的保存格式绑定宿主和用户，不能作为可跨机器导入的内存镜像；配置或系统版本变化也可能使其失效。锁屏状态下的后台恢复不作可用性承诺。见 [Apple WWDC23](https://developer.apple.com/videos/play/wwdc2023/10007/) 和 [restore API](https://developer.apple.com/documentation/virtualization/vzvirtualmachine/restoremachinestatefrom(url:completionhandler:))。
