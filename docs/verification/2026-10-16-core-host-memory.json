@@ -1,0 +1,11 @@
+{
+  "durationSeconds": 3600.105054974556,
+  "failures": [],
+  "hostPeakRSSBytes": 69107712,
+  "memoryScope": "host getrusage peak and separately sampled WebContent RSS peak",
+  "mode": "no window, inactiveSchedulingPolicy none",
+  "p95ms": 13.316035270690918,
+  "pass": true,
+  "samples": 721,
+  "webContentPeakRSSBytes": 30261248
+}

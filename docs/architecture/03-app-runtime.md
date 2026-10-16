@@ -232,3 +232,17 @@ Builder 修改 `core.js` 时：
 
 - 核心宿主的内存开销决定了能同时活跃多少个应用，S1 之后再定上限。
 - 待定：核心和界面共用同一个 origin 和数据存储，`localStorage` 互通。要不要禁止核心使用 `localStorage`，强制有长期价值的状态进入共享集合？建议不禁止，靠 Builder 的约定和评测来约束。
+
+## 重建运行时与实测（2026-10-16）
+
+新实现位于 `Sources/AgentOSRuntime/`，前文 `App/Runtime/` 路径属于原型。Web 核心与 UI 共用资源校验，核心用 `.none` 调度，UI 用 `.suspend`。工具返回值经过 IDL 校验；核心按 8 个实例上限和空闲时间回收，热重载保留来源标签。
+
+| 类型 | 当前实现 | 实测与限制 |
+|---|---|---|
+| Web | 同应用 scheme、CSP、内容规则、顶层来源检查、隔离宿主 world | 全套沙箱回归通过；独立解析网页和 MIME，不运行来源脚本 |
+| 原生 | 受限 swiftc 编译 `Sources/*.swift`，宿主组装 `.app`；核心和 UI 各自独立进程，通过有界 NDJSON 调用宿主 | 编译、契约、共享数据、默认禁网/宿主文件隔离、异常退出后重启通过；原生窗口交互另验 |
+| WASM | `runtime.kind=wasm-component` 加 `runtime.module`；`agentos.wasm.load()` 载入同源 core module v1，JS 包装 IDL 工具 | 整数计算模块已在真实 WebKit 验证；名称沿用原方案，但不实现 Component Model 或 WASI |
+
+S1 补测完成：无窗口运行 3600.105 秒，721 次调用、零失败，p95 13.316 ms；宿主峰值 RSS 69,107,712 字节，单个 WebContent 采样峰值 30,261,248 字节。见[原始记录](../verification/2026-10-16-core-host-memory.json)。这些数字只代表本机此探针，不能推算复杂应用的内存。
+
+应用后端：Web 核心通过 `agentos.backend.call(method,args)` 调用自己的 Python/Node/OCI 服务。每应用独立无网 VM 和磁盘，最多两个驻留后端；契约测试使用单独临时 VM。Node/Python 接收 UTF-8 源码，OCI 接收经验证的镜像布局归档；两者使用同一 stdin/stdout NDJSON 协议。后端不会获得宿主 bridge token；输出始终带私人和后端来源标签。见 [VM 说明](../../vm/README.md)。

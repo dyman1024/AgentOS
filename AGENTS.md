@@ -28,12 +28,14 @@ Personal AgentOS：macOS 上的**生成式个人操作系统**。电脑在应用
 
 | 路径 | 内容 |
 |---|---|
-| `App/` | Swift 6 宿主（SwiftUI + AppKit），默认 MainActor 隔离 |
+| `Host/` | 重建 Swift 6 宿主（SwiftUI + AppKit），默认 MainActor 隔离 |
+| `Sources/` | Swift Package 内核、WebKit 运行时、RuntimeChecks 和 aos |
+| `App/` | 原型参考，新工程不编译 |
 | `agent-engine/` | Agent 引擎（TypeScript，Claude Agent SDK，Bun 编译成 sidecar） |
 | `tests/fixtures/` | 运行时自测和沙箱回归用例 |
 | `project.yml` | XcodeGen 工程定义（`.xcodeproj` 不入库） |
 
-常用命令：`make run`（生成工程、编译、打开）、`make build`、`make selftest`（不调用模型的运行时自测）、`make sandbox-test`（沙箱回归用例）、`make engine-check`（引擎类型检查）。引擎开发时可用 `AGENTOS_ENGINE_CMD="bun run $PWD/agent-engine/src/index.ts"` 免重编宿主。更多开关见 `docs/architecture/11-engineering.md`。
+常用命令：`make run`（生成工程、编译、打开）、`make build`、`make selftest`（不调用模型的运行时自测）、`make sandbox-test`（沙箱回归用例）、`make engine-check`（引擎类型检查）。引擎开发时可用 `AGENTOS_ENGINE_CMD="bun run $PWD/agent-engine/src/rebuild.ts"` 免重编宿主。更多开关见 `docs/architecture/11-engineering.md`。
 
 ## 协作
 

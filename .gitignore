@@ -1,5 +1,8 @@
 .DS_Store
+.build/
+.swiftpm/
 build/
+build-release/
 DerivedData/
 *.xcodeproj/
 xcuserdata/
@@ -8,3 +11,13 @@ agent-engine/node_modules/
 agent-engine/dist/
 agent-engine/*.bun-build
 agent-engine/.*.bun-build
+ui-kit/node_modules/
+Sources/AgentOSRuntime/Resources/Library/*.js
+Sources/AgentOSRuntime/Resources/Library/*.css
+Sources/AgentOSRuntime/Resources/Library/versions.json
+Sources/AgentOSRuntime/Resources/Library/LICENSES.txt
+.workbench-cache/
+release-output/
+
+__pycache__/
+*.pyc

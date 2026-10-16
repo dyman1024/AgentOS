@@ -1,0 +1,45 @@
+Code: 32b68f4b72ef552c24c083a80a9caeb917944e5c
+Workflow: https://github.com/dyman1024/AgentOS/actions/runs/38845358992
+Job: deterministic — success (6m26s)
+Date: 2026-10-16
+Scope: Exact output excerpts below, with job/timestamp prefixes removed.
+Swift report includes 64 cases: 63 executed, 1 explicitly skipped for missing Apple assets.
+The local run executed all 64. A skipped integration is not a passed integration.
+No real VM or desktop clicks are performed by this CI.
+
+➜ Test privateSemanticSearchStaysLocalAndTracksRevisions() skipped: "Requires Apple's installed Chinese sentence model; missing assets are not a passed integration check"
+✔ Test run with 64 tests in 0 suites passed after 7.050 seconds.
+✓ asynchronous exposed state is awaited before health success
+✓ unresolved asynchronous state fails bounded health check
+✓ joint update rejects a failing participant contract
+✓ failed joint contracts preserve live data
+✓ joint contract writes remain isolated from live records
+✓ cross-app calls retain run attribution for grouped recovery
+✓ CLI cannot approve grouped recovery
+✓ declining group recovery leaves data unchanged
+PASS: runtime integration
+PASS: native compiler, protocol and sandbox
+Ran 4 tests in 0.014s
+PASS: authenticated handoff, one database owner, foreground refusal, background reacquisition and data persistence
+PASS: strict bundle signing, hardened Bun JSON-RPC, clean EOF shutdown and Claude binary startup; no model calls
+NOT RUN: hardened host launch with Sparkle requires an Apple signing Team ID; ad-hoc signing cannot satisfy library validation. Use Debug for local host execution. This is an S5 release gate, not a passed startup check.
+{
+  "checks": [
+    "media scan indexes a local WAV",
+    "AVFoundation decodes duration through authorized byte ranges",
+    "real AVPlayer playback advances",
+    "pause and seek update playback position",
+    "playback progress is persisted",
+    "revoked media folder rejects subsequent reads",
+    "two actual unclean host exits enter recovery mode on restart"
+  ],
+  "externalAccounts": false,
+  "modelCalls": 0,
+  "pass": true
+}
+
+Free evaluation preflight only:
+- generation.py: status=not_run, cases=40, requires configured model key and explicit --run --budget-usd
+- research.py: status=not_run, cases=20, requires configured model key and explicit --run --budget-usd
+- evalToolSelection.ts: status=not_run, counts=[50,100,200], cases=60, requires ANTHROPIC_API_KEY, --run and --budget-usd
+- release.py --help: exited successfully; no signed release was published.

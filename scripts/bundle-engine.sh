@@ -18,9 +18,29 @@ fi
 mkdir -p "$OUT"
 cd "$ENGINE_DIR"
 [ -d node_modules ] || "$BUN" install --frozen-lockfile
-"$BUN" build --compile --minify src/index.ts --outfile "$OUT/agentos-engine"
+"$BUN" build --compile --minify src/rebuild.ts --outfile "$OUT/agentos-engine"
 rm -f .*.bun-build  # temp files bun --compile can leave behind in the working directory
 
 ARCH="$(uname -m)"; [ "$ARCH" = "x86_64" ] && ARCH="x64"
 CLAUDE_BIN="node_modules/@anthropic-ai/claude-agent-sdk-darwin-${ARCH}/claude"
 rsync -a "$CLAUDE_BIN" "$OUT/claude"
+
+# Standalone host CLI; no Python or Node installation required on the destination Mac.
+xcrun swiftc -O "${SRCROOT}/Sources/aos/main.swift" -o "$OUT/aos"
+
+# Registered only when the user enables background execution in Settings.
+mkdir -p "${TARGET_BUILD_DIR}/${CONTENTS_FOLDER_PATH}/Library/LaunchAgents"
+cp "${SRCROOT}/Config/dev.agentos.background.plist" "${TARGET_BUILD_DIR}/${CONTENTS_FOLDER_PATH}/Library/LaunchAgents/"
+
+if [ "${CONFIGURATION:-Debug}" = Release ]; then
+  SIGNER="${EXPANDED_CODE_SIGN_IDENTITY:-${CODE_SIGN_IDENTITY:--}}"
+  TIMESTAMP="--timestamp"
+  [ "$SIGNER" = "-" ] && TIMESTAMP="--timestamp=none"
+  for executable in agentos-engine claude; do
+    codesign --force --sign "$SIGNER" --options runtime "$TIMESTAMP" --entitlements "${SRCROOT}/Config/Engine.entitlements" "$OUT/$executable"
+  done
+  codesign --force --sign "$SIGNER" --options runtime "$TIMESTAMP" "$OUT/aos"
+fi
+
+mkdir -p "$OUT/licenses"
+cp node_modules/@anthropic-ai/claude-agent-sdk/LICENSE.md "$OUT/licenses/claude-agent-sdk.md"
