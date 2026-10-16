@@ -7,9 +7,19 @@ struct ActivityDetail: View {
   @State private var expanded = false
   @State private var detail = ""
   var body: some View {
-    DisclosureGroup("原因、参数与变更", isExpanded: $expanded) {
-      Text(detail).font(.system(size: 11, design: .monospaced)).textSelection(.enabled)
-        .frame(maxWidth: .infinity, alignment: .leading)
+    VStack(alignment: .leading, spacing: 8) {
+      Button {
+        expanded.toggle()
+      } label: {
+        Label(
+          expanded ? "收起原因、参数与变更" : "查看原因、参数与变更",
+          systemImage: expanded ? "chevron.down" : "chevron.right")
+      }.buttonStyle(.borderless)
+      if expanded {
+        Text(detail.isEmpty ? "正在读取详情…" : detail)
+          .font(.system(size: 11, design: .monospaced)).textSelection(.enabled)
+          .frame(maxWidth: .infinity, alignment: .leading)
+      }
     }.font(.caption).onChange(of: expanded) { _, open in
       if open {
         Task {

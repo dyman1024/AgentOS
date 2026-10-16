@@ -189,17 +189,27 @@ struct SettingsPanel: View {
             }
           }
         }.formStyle(.grouped).tabItem { Text("系统服务") }
-        List {
-          ForEach(model.grants.indices, id: \.self) { i in
-            let grant = model.grants[i]
-            HStack {
-              VStack(alignment: .leading) {
-                Text(grant["holder"]?.string ?? "").font(.caption)
-                Text((grant["capability"]?.string ?? "") + " · " + (grant["scope"]?.string ?? ""))
-                  .font(.system(size: 12, design: .monospaced))
+        Group {
+          if model.grants.isEmpty {
+            ContentUnavailableView(
+              "暂无应用授权", systemImage: "checkmark.shield",
+              description: Text("安装应用并授予能力后，可以在这里查看和撤销。"))
+          } else {
+            List {
+              ForEach(model.grants.indices, id: \.self) { i in
+                let grant = model.grants[i]
+                HStack {
+                  VStack(alignment: .leading) {
+                    Text(grant["holder"]?.string ?? "").font(.caption)
+                    Text(
+                      (grant["capability"]?.string ?? "") + " · " + (grant["scope"]?.string ?? "")
+                    )
+                    .font(.system(size: 12, design: .monospaced))
+                  }
+                  Spacer()
+                  Button("撤销") { if let id = grant["id"]?.string { model.revoke(id) } }
+                }.accessibilityElement(children: .contain)
               }
-              Spacer()
-              Button("撤销") { if let id = grant["id"]?.string { model.revoke(id) } }
             }
           }
         }.tabItem { Text("应用授权") }
@@ -288,7 +298,10 @@ struct SettingsPanel: View {
             ) { app in
               Button("使用「\(app.title)」作为桌面") { Task { await model.selectShell(app.id) } }
             }
-            Button("进入恢复模式") { model.safeMode = true }
+            Button("进入恢复模式") {
+              model.showSettings = false
+              model.safeMode = true
+            }
           }
         }.formStyle(.grouped).tabItem { Text("自动化与桌面") }
         VStack(alignment: .leading, spacing: 20) {

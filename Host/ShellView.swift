@@ -63,17 +63,17 @@ struct ShellView: View {
         model.showActivity = true
       } label: {
         Image(systemName: "clock.arrow.circlepath")
-      }.help("活动与撤销")
+      }.help("活动与撤销").accessibilityLabel("活动与撤销")
       Button {
         model.showChat.toggle()
       } label: {
         Image(systemName: "sidebar.right")
-      }.help("对话面板")
+      }.help("对话面板").accessibilityLabel("对话面板")
       Button {
         model.showSettings = true
       } label: {
         Image(systemName: "gearshape")
-      }.help("设置")
+      }.help("设置").accessibilityLabel("设置")
     }.buttonStyle(.plain).padding(.horizontal, 22).padding(.vertical, 14).padding(.leading, 58)
       .background(Palette.panel)
   }
@@ -97,6 +97,7 @@ struct ShellView: View {
                   } label: {
                     Image(systemName: "xmark").font(.system(size: 9))
                   }
+                  .help("关闭 " + app.title).accessibilityLabel("关闭 " + app.title)
                 }.padding(10).background(
                   model.selected == id ? Palette.card : .clear,
                   in: RoundedRectangle(cornerRadius: 8))
@@ -110,22 +111,42 @@ struct ShellView: View {
           } label: {
             Image(systemName: "clock")
           }
+          .help("版本时间线").accessibilityLabel("版本时间线")
           Button {
             model.popOut()
           } label: {
             Image(systemName: "arrow.up.right.square")
           }
+          .help("在独立窗口中打开").accessibilityLabel("在独立窗口中打开")
           Button {
             model.reload()
           } label: {
             Image(systemName: "arrow.clockwise")
           }
+          .help("重新加载应用").accessibilityLabel("重新加载应用")
         }
       }.buttonStyle(.plain).font(.system(size: 12)).padding(10).background(Palette.panel)
       Divider()
       ZStack {
         if let instance = model.currentView {
-          WebPane(instance: instance)
+          WebPane(instance: instance, canAttach: { model.currentView === instance })
+        } else if let id = model.selected, let window = model.windows[id] {
+          VStack(spacing: 18) {
+            Image(systemName: "macwindow.on.rectangle").font(.system(size: 36))
+              .foregroundStyle(Palette.ember)
+            Text("应用使用独立窗口").font(.title2)
+            HStack {
+              Button("显示独立窗口") { window.makeKeyAndOrderFront(nil) }
+              Button("返回工作区") { Task { await model.open(id) } }
+            }
+          }.frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if let id = model.selected,
+          model.apps.first(where: { $0.id == id })?.manifest["runtime"]?["kind"] == "macos-native"
+        {
+          VStack(spacing: 18) {
+            Text("原生应用使用独立窗口").font(.title2)
+            Button("打开原生窗口") { Task { await model.open(id) } }
+          }.frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if model.selected != nil {
           VStack(spacing: 18) {
             Image(systemName: "sparkle").font(.system(size: 36)).foregroundStyle(Palette.ember)
@@ -307,32 +328,38 @@ struct ShellView: View {
         Button("完成") { model.showActivity = false }
       }
       Text("每次写入都留下记录。撤销保留之后的独立修改。").foregroundStyle(Palette.muted)
-      List(model.activities) { item in
-        VStack(alignment: .leading, spacing: 8) {
-          HStack {
-            VStack(alignment: .leading, spacing: 6) {
-              Text(item.action).font(.system(.body, design: .monospaced))
-              Text(item.target).font(.caption).foregroundStyle(Palette.muted)
-              Text(item.at).font(.caption2).foregroundStyle(Palette.muted)
+      if model.activities.isEmpty {
+        ContentUnavailableView(
+          "暂无活动", systemImage: "clock.arrow.circlepath",
+          description: Text("应用写入数据或执行操作后，可以在这里查看详情和撤销。"))
+      } else {
+        List(model.activities) { item in
+          VStack(alignment: .leading, spacing: 8) {
+            HStack {
+              VStack(alignment: .leading, spacing: 6) {
+                Text(item.action).font(.system(.body, design: .monospaced))
+                Text(item.target).font(.caption).foregroundStyle(Palette.muted)
+                Text(item.at).font(.caption2).foregroundStyle(Palette.muted)
+              }
+              Spacer()
+              if item.effect == .irreversible {
+                Text("不可撤销").foregroundStyle(Palette.amber)
+              } else if item.state == "applied"
+                || (item.action.hasPrefix("files.") && ["done", "unknown"].contains(item.state))
+                || (item.action == "calendar.create" && item.state == "done")
+              {
+                Button(item.undoOf == nil ? "撤销" : "撤销此操作") { model.undo(item) }
+              } else {
+                Text(
+                  [
+                    "done": "已完成", "failed": "失败", "unknown": "结果待核实", "pending": "等待确认",
+                    "ready": "待执行", "executing": "执行中", "compensated": "已补偿", "undone": "已撤销",
+                  ][item.state] ?? item.state
+                ).foregroundStyle(Palette.muted)
+              }
             }
-            Spacer()
-            if item.effect == .irreversible {
-              Text("不可撤销").foregroundStyle(Palette.amber)
-            } else if item.state == "applied"
-              || (item.action.hasPrefix("files.") && ["done", "unknown"].contains(item.state))
-              || (item.action == "calendar.create" && item.state == "done")
-            {
-              Button(item.undoOf == nil ? "撤销" : "撤销此操作") { model.undo(item) }
-            } else {
-              Text(
-                [
-                  "done": "已完成", "failed": "失败", "unknown": "结果待核实", "pending": "等待确认",
-                  "ready": "待执行", "executing": "执行中", "compensated": "已补偿", "undone": "已撤销",
-                ][item.state] ?? item.state
-              ).foregroundStyle(Palette.muted)
-            }
-          }
-          ActivityDetail(model: model, item: item)
+            ActivityDetail(model: model, item: item)
+          }.accessibilityElement(children: .contain)
         }
       }
     }.padding(24).frame(width: 730, height: 560)
@@ -346,7 +373,7 @@ struct ShellView: View {
           Text(version).font(.system(.body, design: .monospaced))
           Spacer()
           Button("回滚到此版本") { model.rollback(version) }
-        }
+        }.accessibilityElement(children: .contain)
       }
       Button("完成") { model.showVersions = false }
     }.padding(24).frame(width: 540, height: 430)
@@ -355,6 +382,7 @@ struct ShellView: View {
 }
 struct WebPane: NSViewRepresentable {
   let instance: WebInstance
+  let canAttach: () -> Bool
   func makeNSView(context: Context) -> NSView {
     let view = NSView()
     install(in: view)
@@ -362,8 +390,8 @@ struct WebPane: NSViewRepresentable {
   }
   func updateNSView(_ view: NSView, context: Context) { install(in: view) }
   private func install(in view: NSView) {
-    guard instance.webView.superview !== view else { return }
-    view.subviews.forEach { $0.removeFromSuperview() }
+    guard canAttach(), instance.webView.superview !== view else { return }
+    for subview in view.subviews { subview.removeFromSuperview() }
     let web = instance.webView
     web.removeFromSuperview()
     web.frame = view.bounds

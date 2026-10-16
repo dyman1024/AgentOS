@@ -214,7 +214,10 @@ struct Approval: Identifiable {
         status = "原生应用已在独立窗口打开"
         return
       }
-      currentView = try await runtime.instance(id, core: false)
+      let instance = try await runtime.instance(id, core: false)
+      guard selected == id else { return }
+      windows.removeValue(forKey: id)?.close()
+      currentView = instance
       status = "就绪"
     } catch {
       currentView = nil
@@ -244,11 +247,20 @@ struct Approval: Identifiable {
       contentRect: NSRect(x: 150, y: 150, width: 960, height: 700),
       styleMask: [.titled, .closable, .resizable, .miniaturizable], backing: .buffered, defer: false
     )
+    window.isReleasedWhenClosed = false
+    window.appearance = NSAppearance(named: .darkAqua)
     window.title = apps.first { $0.id == selected }?.title ?? "AgentOS"
-    window.contentView = currentView.webView
+    // Transfer ownership before SwiftUI updates the old representable. A stale
+    // update must not attach this WKWebView back to the main workspace.
+    self.currentView = nil
+    let container = NSView(frame: NSRect(x: 0, y: 0, width: 960, height: 700))
+    currentView.webView.removeFromSuperview()
+    currentView.webView.frame = container.bounds
+    currentView.webView.autoresizingMask = [.width, .height]
+    container.addSubview(currentView.webView)
+    window.contentView = container
     window.makeKeyAndOrderFront(nil)
     windows[selected] = window
-    self.currentView = nil
   }
   func send(_ suggested: String? = nil, labels: Labels = Labels()) {
     let text = (suggested ?? input).trimmingCharacters(in: .whitespacesAndNewlines)
