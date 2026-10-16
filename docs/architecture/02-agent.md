@@ -242,6 +242,6 @@ Builder 默认生成 Web 应用，也收到原生 Swift 与 WASM 的文件、SDK
 | 验证 | Anthropic 查询指定模型；OpenRouter 先查当前 Key，再分页查账户模型列表 | 401、403、404、429、超时和取消都有独立反馈；不调用生成接口 |
 | 信息保护 | 不回显 Key、不记录响应体；不跟随认证请求的重定向 | 日志与聊天中无凭据；验证不发送聊天内容 |
 
-“已保存”只代表本地可读取；“验证通过”只代表认证与模型元数据查询成功，不能替代余额、生成能力或质量评测。开发版 ad-hoc 签名更新后若钥匙串要求重新授权，保留原条目并提示处理系统授权，不删除用户 Key 或放宽钥匙串访问控制。
+打开设置时的“已保存”只代表条目存在；“已保存到钥匙串并通过读取校验”才代表本次写入与读回成功。“验证通过”只代表认证与模型元数据查询成功，不能替代余额、生成能力或质量评测。开发版 ad-hoc 签名更新后若钥匙串要求重新授权，保留原条目并提示处理系统授权，不删除用户 Key 或放宽钥匙串访问控制。
 
 接口依据：[Anthropic Get a Model](https://platform.claude.com/docs/en/api/http/models/retrieve)、[OpenRouter 当前 Key](https://openrouter.ai/docs/api/api-reference/api-keys/get-current-api-key)、[OpenRouter 账户模型列表](https://openrouter.ai/docs/api/api-reference/models/list-models-filtered-by-user-provider-preferences-privacy-settings-and-guardrails)。
