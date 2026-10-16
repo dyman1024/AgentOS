@@ -55,4 +55,6 @@ S3/S4/S6 付费模型评测继续按用户决定暂缓。真实账户、Develope
 
 ## 当前提交的远端结果
 
-待代码提交后记录 GitHub Actions 的实际结果；历史 CI 不代替本轮新增代码验收。
+代码提交 `32b68f4b72ef552c24c083a80a9caeb917944e5c` 的 [GitHub Actions](https://github.com/dyman1024/AgentOS/actions/runs/38845358992) 成功。内核、真实 WebKit、原生沙箱、OCI、引擎、Debug、本地媒体与异常退出、前后台交接、Release/sidecar 和免费预检均完成。远端日志摘录见 [CI 记录](2026-10-16-evolution-ci.txt)。
+
+Swift 报告包含 64 项，其中 Apple 中文句向量集成因 runner 缺资源明确 skipped，实际执行 63 项；本机 64 项实际执行通过。Release 宿主因缺 Team ID 明确 NOT RUN，付费评测入口返回 `not_run`。远端没有执行真实 VM 和桌面点击，不替代上面的本机实测。记录此结果的后续提交只修改文档。
